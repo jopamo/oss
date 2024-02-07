@@ -10,7 +10,14 @@ int main(int argc, char *argv[]) {
   }
 
   // Convert the command-line argument to an integer for the iteration count
-  int iterations = atoi(argv[1]);
+  char *endptr;
+  long iterations = strtol(argv[1], &endptr, 10); // Convert string to long with error checking
+
+  // Check for conversion errors or non-positive numbers
+  if (*endptr != '\0' || iterations <= 0) {
+    fprintf(stderr, "Error: '%s' is not a valid positive integer.\n", argv[1]);
+    return 1;
+  }
 
   // Loop for the specified number of iterations
   for(int i = 1; i <= iterations; i++) {
