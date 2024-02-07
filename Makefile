@@ -1,6 +1,6 @@
 # Define the compiler and compilation flags
 CC=gcc
-CFLAGS=-Wall -g
+CFLAGS = -Wall -Wextra -pedantic -g
 
 # Compile both oss and user executables as the default action
 all: oss user
