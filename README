@@ -33,3 +33,8 @@ To remove all compiled files, run:
 ```
 make clean
 ```
+
+### Changelog
+
+[Commit History](https://github.com/jopamo/skeleton_mp/commits/master)
+```
