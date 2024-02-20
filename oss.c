@@ -37,6 +37,16 @@ void printHelp() {
   printf("  -t iter   Iterations per user process\n");
 }
 
+// find an empty or reusable entry in the process table
+int findEmptyProcessEntry(PCB *table) {
+  for (int i = 0; i < MAX_PROCESSES; i++) {
+    if (table[i].occupied == 0) {
+      return i;
+    }
+  }
+  return -1; // No empty entry found
+}
+
 int main(int argc, char *argv[]) {
   int option;
   int totalProcesses = 5; // Default total process count
@@ -75,14 +85,11 @@ int main(int argc, char *argv[]) {
   SimulatedClock *simClock;
   key_t key = ftok("oss.c", 'R');
   shmId = shmget(key, sizeof(SimulatedClock), IPC_CREAT | 0666);
-
   if (shmId < 0) {
     perror("shmget");
     exit(1);
   }
-
   simClock = (SimulatedClock *)shmat(shmId, NULL, 0);
-
   if (simClock == (void *)-1) {
     perror("shmat");
     exit(1);
@@ -96,36 +103,31 @@ int main(int argc, char *argv[]) {
     processTable[i].occupied = 0;
   }
 
-  // Main loop for creating and managing child processes
   int activeProcesses = 0;
-  int launchedProcesses = 0;
-  while (keepRunning && launchedProcesses < totalProcesses) {
-    for (int i = 0; i < MAX_PROCESSES && activeProcesses < simultaneousProcesses; i++) {
-      if (!processTable[i].occupied) {
-        pid_t pid = fork();
-        if (pid == 0) { // Child process path
-          // Execute worker process
-          execl("./worker", "worker", NULL);
-          perror("execl");
-          exit(1);
-        }
-        else if (pid > 0) { // Parent process path
-          processTable[i].occupied = 1;
-          processTable[i].pid = pid;
-          processTable[i].startSeconds = simClock->seconds;
-          processTable[i].startNano = simClock->nanoseconds;
-          activeProcesses++;
-          launchedProcesses++;
-        }
-        else {
-          perror("fork");
-          exit(1);
-        }
+  while (keepRunning) {
+    int index = findEmptyProcessEntry(processTable);
+    if (index != -1 && activeProcesses < simultaneousProcesses) {
+      pid_t pid = fork();
+      if (pid == 0) {
+        // Child process
+        execl("./worker", "worker", NULL);
+        perror("execl");
+        exit(1);
+      } else if (pid > 0) {
+        // Parent process: Update process table entry for the new child
+        processTable[index].occupied = 1;
+        processTable[index].pid = pid;
+        processTable[index].startSeconds = simClock->seconds;
+        processTable[index].startNano = simClock->nanoseconds;
+        activeProcesses++;
+      } else {
+        perror("fork");
+        exit(1);
       }
     }
 
     // Update simulated clock here
-    simClock->nanoseconds += 100000; // Example increment
+    simClock->nanoseconds += 100000;
     if (simClock->nanoseconds >= 1000000000) {
       simClock->seconds += 1;
       simClock->nanoseconds -= 1000000000;
@@ -133,8 +135,8 @@ int main(int argc, char *argv[]) {
 
     // Check for terminated processes
     pid_t pid;
-    while ((pid = waitpid(-1, NULL, WNOHANG)) > 0) {
-      // Clear process table entry
+    int status;
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
       for (int i = 0; i < MAX_PROCESSES; i++) {
         if (processTable[i].pid == pid) {
           processTable[i].occupied = 0;
