@@ -13,13 +13,12 @@ typedef struct {
 int main(int argc, char *argv[]) {
   if (argc != 3) {
     fprintf(stderr, "Usage: %s seconds nanoseconds\n", argv[0]);
-    return 1; // Exit with error if the argument count is incorrect
+    return 1;
   }
 
   int durationSecs = atoi(argv[1]);
   int durationNanos = atoi(argv[2]);
 
-  // Attach to the shared memory segment for the simulated system clock
   key_t key = ftok("oss.c", 'R');
   int shmId = shmget(key, sizeof(SimulatedClock), 0666);
   if (shmId < 0) {
@@ -33,34 +32,32 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  // Calculate termination time
-  int termSecs = simClock->seconds + durationSecs;
-  int termNanos = simClock->nanoseconds + durationNanos;
+  long termSecs = simClock->seconds + durationSecs;
+  long termNanos = simClock->nanoseconds + durationNanos;
+
   if (termNanos >= 1000000000) {
-    termSecs += 1;
+    termSecs++;
     termNanos -= 1000000000;
   }
 
-  printf("WORKER PID:%d PPID:%d SysClockS: %d SysclockNano: %d TermTimeS: %d TermTimeNano: %d\n",
+
+  printf("WORKER PID:%d PPID:%d SysClockS: %d SysclockNano: %d TermTimeS: %ld TermTimeNano: %ld --Just Starting\n",
        getpid(), getppid(), simClock->seconds, simClock->nanoseconds, termSecs, termNanos);
-  printf("--Just Starting\n");
 
   int prevSecs = simClock->seconds;
-  // Loop until termination time is reached
+
   while (simClock->seconds < termSecs || (simClock->seconds == termSecs && simClock->nanoseconds < termNanos)) {
+
     if (simClock->seconds > prevSecs) {
-      printf("WORKER PID:%d PPID:%d SysClockS: %d SysclockNano: %d TermTimeS: %d TermTimeNano: %d\n",
-           getpid(), getppid(), simClock->seconds, simClock->nanoseconds, termSecs, termNanos);
-      printf("--%d seconds have passed since starting\n", simClock->seconds - prevSecs);
+      printf("WORKER PID:%d PPID:%d SysClockS: %d SysclockNano: %d --%d seconds have passed since starting\n",
+           getpid(), getppid(), simClock->seconds, simClock->nanoseconds, simClock->seconds - prevSecs);
       prevSecs = simClock->seconds;
     }
   }
 
-  printf("WORKER PID:%d PPID:%d SysClockS: %d SysclockNano: %d TermTimeS: %d TermTimeNano: %d\n",
+  printf("WORKER PID:%d PPID:%d SysClockS: %d SysclockNano: %d TermTimeS: %ld TermTimeNano: %ld --Terminating\n",
        getpid(), getppid(), simClock->seconds, simClock->nanoseconds, termSecs, termNanos);
-  printf("--Terminating\n");
 
-  // Detach from the shared memory segment
   shmdt(simClock);
 
   return 0;
