@@ -1,32 +1,67 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+
+typedef struct {
+  int seconds;
+  int nanoseconds;
+} SimulatedClock;
 
 int main(int argc, char *argv[]) {
-  // Validate the correct number of command-line arguments
-  if(argc != 2) {
-    fprintf(stderr, "Usage: %s <iterations>\n", argv[0]);
+  if (argc != 3) {
+    fprintf(stderr, "Usage: %s seconds nanoseconds\n", argv[0]);
     return 1; // Exit with error if the argument count is incorrect
   }
 
-  // Convert the command-line argument to an integer for the iteration count
-  char *endptr;
-  long iterations = strtol(argv[1], &endptr, 10); // Convert string to long with error checking
+  int durationSecs = atoi(argv[1]);
+  int durationNanos = atoi(argv[2]);
 
-  // Check for conversion errors or non-positive numbers
-  if (*endptr != '\0' || iterations <= 0) {
-    fprintf(stderr, "Error: '%s' is not a valid positive integer.\n", argv[1]);
-    return 1;
+  // Attach to the shared memory segment for the simulated system clock
+  key_t key = ftok("oss.c", 'R');
+  int shmId = shmget(key, sizeof(SimulatedClock), 0666);
+  if (shmId < 0) {
+    perror("shmget");
+    exit(1);
   }
 
-  // Loop for the specified number of iterations
-  for(int i = 1; i <= iterations; i++) {
-    // Print the process and parent process IDs before sleeping
-    printf("USER PID:%d PPID:%d Iteration:%d before sleeping\n", getpid(), getppid(), i);
-    sleep(1); // Sleep for 1 second
-    // Print the process and parent process IDs after sleeping
-    printf("USER PID:%d PPID:%d Iteration:%d after sleeping\n", getpid(), getppid(), i);
+  SimulatedClock *simClock = (SimulatedClock *)shmat(shmId, NULL, 0);
+  if (simClock == (void *)-1) {
+    perror("shmat");
+    exit(1);
   }
 
-  return 0; // Successful execution
+  // Calculate termination time
+  int termSecs = simClock->seconds + durationSecs;
+  int termNanos = simClock->nanoseconds + durationNanos;
+  if (termNanos >= 1000000000) {
+    termSecs += 1;
+    termNanos -= 1000000000;
+  }
+
+  printf("WORKER PID:%d PPID:%d SysClockS: %d SysclockNano: %d TermTimeS: %d TermTimeNano: %d\n",
+       getpid(), getppid(), simClock->seconds, simClock->nanoseconds, termSecs, termNanos);
+  printf("--Just Starting\n");
+
+  int prevSecs = simClock->seconds;
+  // Loop until termination time is reached
+  while (simClock->seconds < termSecs || (simClock->seconds == termSecs && simClock->nanoseconds < termNanos)) {
+    if (simClock->seconds > prevSecs) {
+      printf("WORKER PID:%d PPID:%d SysClockS: %d SysclockNano: %d TermTimeS: %d TermTimeNano: %d\n",
+           getpid(), getppid(), simClock->seconds, simClock->nanoseconds, termSecs, termNanos);
+      printf("--%d seconds have passed since starting\n", simClock->seconds - prevSecs);
+      prevSecs = simClock->seconds;
+    }
+  }
+
+  printf("WORKER PID:%d PPID:%d SysClockS: %d SysclockNano: %d TermTimeS: %d TermTimeNano: %d\n",
+       getpid(), getppid(), simClock->seconds, simClock->nanoseconds, termSecs, termNanos);
+  printf("--Terminating\n");
+
+  // Detach from the shared memory segment
+  shmdt(simClock);
+
+  return 0;
 }
