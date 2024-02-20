@@ -4,6 +4,23 @@
 #include <sys/wait.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+
+#define MAX_PROCESSES 20
+
+typedef struct {
+  int seconds;
+  int nanoseconds;
+} SimulatedClock;
+
+typedef struct PCB {
+  int occupied; // either true or false
+  pid_t pid; // process id of this child
+  int startSeconds; // time when it was forked
+  int startNano; // time when it was forked
+} PCB;
 
 volatile sig_atomic_t keepRunning = 1;
 
@@ -24,7 +41,6 @@ int main(int argc, char *argv[]) {
   int option;
   int totalProcesses = 5; // Default total process count
   int simultaneousProcesses = 3; // Default simultaneous process limit
-  int iterations = 7; // Default iteration count per process
   char *endptr;
 
   signal(SIGINT, signalHandler);
@@ -48,49 +64,90 @@ int main(int argc, char *argv[]) {
           return 1;
         }
         break;
-      case 't': // Set iterations per process
-        iterations = strtol(optarg, &endptr, 10);
-        if (*endptr != '\0' || iterations <= 0) {
-          fprintf(stderr, "Invalid iteration count: %s\n", optarg);
-          return 1;
-        }
-        break;
       default: // Invalid option or lack thereof prompts help display
         printHelp();
         return 1;
     }
   }
 
-  int activeProcesses = 0; // Counter for currently active child processes
-  int launchedProcesses = 0; // Counter for total launched child processes
-  pid_t pid;
+  // Shared memory for simulated clock
+  int shmId;
+  SimulatedClock *simClock;
+  key_t key = ftok("oss.c", 'R');
+  shmId = shmget(key, sizeof(SimulatedClock), IPC_CREAT | 0666);
 
+  if (shmId < 0) {
+    perror("shmget");
+    exit(1);
+  }
+
+  simClock = (SimulatedClock *)shmat(shmId, NULL, 0);
+
+  if (simClock == (void *)-1) {
+    perror("shmat");
+    exit(1);
+  }
+  simClock->seconds = 0;
+  simClock->nanoseconds = 0;
+
+  // Initialize process table
+  PCB processTable[MAX_PROCESSES];
+  for (int i = 0; i < MAX_PROCESSES; i++) {
+    processTable[i].occupied = 0;
+  }
+
+  // Main loop for creating and managing child processes
+  int activeProcesses = 0;
+  int launchedProcesses = 0;
   while (keepRunning && launchedProcesses < totalProcesses) {
-    if (activeProcesses < simultaneousProcesses) {
-      pid = fork();
-      if (pid == 0) { // Child process path
-        char iterParam[10];
-        sprintf(iterParam, "%d", iterations); // Prepare iteration parameter
-        execl("./user", "user", iterParam, (char *)NULL); // Execute user process
-        perror("execl"); // Exec failure reporting
-        exit(1); // Exit child process on exec failure
-      } else if (pid > 0) { // Parent process path
-        activeProcesses++;
-        launchedProcesses++;
-      } else { // Fork failure handling
-        perror("fork");
-        exit(1); // Exit on fork failure
+    for (int i = 0; i < MAX_PROCESSES && activeProcesses < simultaneousProcesses; i++) {
+      if (!processTable[i].occupied) {
+        pid_t pid = fork();
+        if (pid == 0) { // Child process path
+          // Execute worker process
+          execl("./worker", "worker", NULL);
+          perror("execl");
+          exit(1);
+        }
+        else if (pid > 0) { // Parent process path
+          processTable[i].occupied = 1;
+          processTable[i].pid = pid;
+          processTable[i].startSeconds = simClock->seconds;
+          processTable[i].startNano = simClock->nanoseconds;
+          activeProcesses++;
+          launchedProcesses++;
+        }
+        else {
+          perror("fork");
+          exit(1);
+        }
       }
     }
 
-    // Non-blocking wait for any child process to exit
+    // Update simulated clock here
+    simClock->nanoseconds += 100000; // Example increment
+    if (simClock->nanoseconds >= 1000000000) {
+      simClock->seconds += 1;
+      simClock->nanoseconds -= 1000000000;
+    }
+
+    // Check for terminated processes
+    pid_t pid;
     while ((pid = waitpid(-1, NULL, WNOHANG)) > 0) {
-      activeProcesses--;
+      // Clear process table entry
+      for (int i = 0; i < MAX_PROCESSES; i++) {
+        if (processTable[i].pid == pid) {
+          processTable[i].occupied = 0;
+          activeProcesses--;
+          break;
+        }
+      }
     }
   }
 
-  // Block until all active child processes have exited
-  while ((pid = waitpid(-1, NULL, 0)) > 0);
+  // Cleanup
+  shmdt((void *) simClock);
+  shmctl(shmId, IPC_RMID, NULL);
 
-  return 0; // Successful program termination
+  return 0;
 }
