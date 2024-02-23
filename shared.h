@@ -7,6 +7,8 @@
 #define SHM_PATH "/etc/passwd"
 #define SHM_PROJ_ID 'b'
 
+int isNumeric(const char *str);
+
 typedef struct {
     int seconds;
     int nanoseconds;

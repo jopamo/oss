@@ -1,3 +1,5 @@
+#include <ctype.h>
+
 #include "shared.h"
 
 /**
@@ -11,3 +13,20 @@ key_t getSharedMemoryKey() {
     return ftok(SHM_PATH, SHM_PROJ_ID);
 }
 
+/**
+ * Checks if a string represents a numeric value
+ *
+ * @param str Pointer to the string to be checked
+ * @return 1 if the string is numeric, 0 otherwise
+ */
+int isNumeric(const char *str) {
+    // Iterate through each character of the string
+    for (int i = 0; str[i] != '\0'; i++) {
+        if (!isdigit(str[i])) {
+            // If a non-digit character is found, return 0
+            return 0;
+        }
+    }
+    // All characters are digits, return 1
+    return 1;
+}

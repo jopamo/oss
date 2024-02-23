@@ -20,7 +20,6 @@ and termination of worker processes based on simulated time.
 #include <time.h>
 #include <stdbool.h>
 #include <string.h>
-#include <ctype.h>
 
 #include "shared.h"
 
@@ -94,7 +93,7 @@ int main(int argc, char * argv[]) {
     }
 
     // Increment the simulated clock periodically.
-    incrementSimulatedClock(simClock, 1000000);
+    incrementSimulatedClock(simClock, 4800000);
 
     // Attempt to launch new worker processes at defined intervals, if within limits.
     if (currentTime - lastWorkerCheck >= WORKER_LAUNCH_INTERVAL && currentSimul < simul && totalLaunched < proc) {
@@ -113,7 +112,7 @@ int main(int argc, char * argv[]) {
     }
 
     // Sleep briefly to reduce CPU usage during the simulation.
-    usleep(500000);
+    usleep(480000);
   }
 
   // Perform cleanup of shared resources before program termination.
@@ -476,7 +475,7 @@ void cleanup() {
  * @param signal The signal number received
  */
 void handleSignal(int signal) {
-  printf("Caught signal %d. Cleaning up", signal);
+  printf("Caught signal %d. Cleaning up\n", signal);
   cleanup();
   exit(EXIT_FAILURE); // Terminate the program with a failure status
 }
@@ -529,20 +528,3 @@ void terminateAllChildren() {
     }
 }
 
-/**
- * Checks if a string represents a numeric value
- *
- * @param str Pointer to the string to be checked
- * @return 1 if the string is numeric, 0 otherwise
- */
-int isNumeric(const char *str) {
-    // Iterate through each character of the string
-    for (int i = 0; str[i] != '\0'; i++) {
-        if (!isdigit(str[i])) {
-            // If a non-digit character is found, return 0
-            return 0;
-        }
-    }
-    // All characters are digits, return 1
-    return 1;
-}
