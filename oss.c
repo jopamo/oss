@@ -1,12 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <signal.h>
 #include <unistd.h>
-#include <sys/ipc.h>
-#include <sys/shm.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <stdbool.h>
+
 #include "shared.h"
 
 #define MAX_PROCESSES 20
@@ -15,8 +14,10 @@
 #define PRINT_INTERVAL 5
 #define WORKER_LAUNCH_INTERVAL 1
 
-SimulatedClock *simClock = NULL;
+SimulatedClock * simClock = NULL;
 int shmId = -1;
+bool cleanupDone = false;
+int totalLaunched = 0;
 
 typedef struct {
   int occupied;
@@ -28,69 +29,79 @@ PCB;
 
 PCB processTable[MAX_PROCESSES];
 
-// Forward Declarations
 void parseArgs(int argc, char * argv[], int * proc, int * simul, int * timelimitForChildren, int * intervalInMsToLaunchChildren);
 SimulatedClock * setupSharedMemory(void);
 void initializeProcessTable(PCB processTable[]);
 void incrementSimulatedClock(SimulatedClock * simClock, int increment);
 void checkAndLaunchWorkers(SimulatedClock * simClock, PCB processTable[], int proc, int simul, int timelimitForChildren, int intervalInMsToLaunchChildren, int * currentSimul, time_t * lastLaunchTime);
-void checkForTerminatedChildren(PCB processTable[]);
+void checkForTerminatedChildren(PCB processTable[], int * currentSimul);
 void printProcessTable(SimulatedClock * simClock, PCB processTable[]);
 void cleanup();
 void handle_signal(int signal);
+void setupSignalHandler();
 void printCurrentSimulatedTime(SimulatedClock * simClock);
 
 int main(int argc, char * argv[]) {
+  setupSignalHandler();
+
   int proc = 5, simul = 3, timelimitForChildren = 7, intervalInMsToLaunchChildren = 100;
-  PCB processTable[MAX_PROCESSES] = {
-    0
-  };
-
   int currentSimul = 0;
-  time_t startTime = time(NULL), currentTime, lastWorkerCheck = 0, lastPrintTime = 0;
-
-  signal(SIGINT, handle_signal);
+  int totalLaunched = 0;
 
   parseArgs(argc, argv, & proc, & simul, & timelimitForChildren, & intervalInMsToLaunchChildren);
-  SimulatedClock * simClock = setupSharedMemory();
+  printf("Parsed command-line arguments:\n");
+  printf("  - Total processes (n): %d\n", proc);
+  printf("  - Simultaneous processes (s): %d\n", simul);
+  printf("  - Time limit for children (t): %d seconds\n", timelimitForChildren);
+  printf("  - Interval for launching children (i): %d milliseconds\n", intervalInMsToLaunchChildren);
+
+  simClock = setupSharedMemory();
   initializeProcessTable(processTable);
 
+  time_t startTime = time(NULL), currentTime, lastWorkerCheck = 0, lastPrintTime = 0;
   while (1) {
     currentTime = time(NULL);
-
-    if (currentTime - startTime >= 60) {
+    if (currentTime - startTime >= SIMULATION_TIME_LIMIT) {
       printf("Simulation ends after 60 real-world seconds.\n");
       break;
     }
 
     incrementSimulatedClock(simClock, 1000000);
-    printf("Simulated Time: %d seconds, %d nanoseconds\n", simClock->seconds, simClock->nanoseconds);
 
-    if (currentTime - lastWorkerCheck >= 1 && currentSimul < simul) {
-      checkAndLaunchWorkers(simClock, processTable, proc, simul, timelimitForChildren, intervalInMsToLaunchChildren, & currentSimul, & lastWorkerCheck);
-      lastWorkerCheck = currentTime;
+    if (currentTime - lastWorkerCheck >= WORKER_LAUNCH_INTERVAL) {
+      if (currentSimul < simul) {
+        if (totalLaunched < proc) {
+          checkAndLaunchWorkers(simClock, processTable, proc, simul, timelimitForChildren, intervalInMsToLaunchChildren, & currentSimul, & lastWorkerCheck);
+          lastWorkerCheck = currentTime;
+          totalLaunched++;
+        }
+        else {
+          // printf("Error: Total launched processes limit (%d) reached.\n", proc);
+        }
+      }
+      else {
+        //printf("Error: Simultaneous processes limit (%d) reached.\n", simul);
+      }
+    }
+    else {
+      //printf("Error: Worker launch interval (%d milliseconds) not yet passed.\n", WORKER_LAUNCH_INTERVAL);
     }
 
-    checkForTerminatedChildren(processTable);
+    checkForTerminatedChildren(processTable, & currentSimul);
 
-    if (currentTime - lastPrintTime >= 5) {
-      printCurrentSimulatedTime(simClock);
+    if (currentTime - lastPrintTime >= PRINT_INTERVAL) {
+      printProcessTable(simClock, processTable);
       lastPrintTime = currentTime;
     }
 
     usleep(100000);
   }
 
-  if (shmdt(simClock) == -1) {
-    perror("shmdt failed");
-    exit(EXIT_FAILURE);
-  }
-  printf("Simulation completed. Resources cleaned up.\n");
+  cleanup();
   return 0;
 }
 
 SimulatedClock * setupSharedMemory() {
-  int shmId;
   SimulatedClock * simClock;
 
   key_t key = getSharedMemoryKey();
@@ -194,28 +205,37 @@ void launchWorker(SimulatedClock * simClock, int waitSeconds, int waitNanosecond
 
   if (pid == -1) {
     perror("fork error");
-    exit(1);
+    exit(EXIT_FAILURE);
   }
   else if (pid == 0) {
-    char secStr[12];
-    char nanoStr[12];
+    char secStr[20];
+    char nanoStr[20];
 
-    sprintf(secStr, "%d", waitSeconds);
-    sprintf(nanoStr, "%d", waitNanoseconds);
+    snprintf(secStr, sizeof(secStr), "%d", waitSeconds);
+    snprintf(nanoStr, sizeof(nanoStr), "%d", waitNanoseconds);
+
     execl("./worker", "worker", secStr, nanoStr, (char * ) NULL);
+
     perror("execl error");
-    exit(1);
-  } else {
+    exit(EXIT_FAILURE);
+  }
+  else {
     addProcessToTable(pid, simClock -> seconds, simClock -> nanoseconds);
-
     int status;
-    waitpid(pid, & status, 0);
-    removeProcessFromTable(pid);
-    if (WIFEXITED(status)) {
-      int exit_status = WEXITSTATUS(status);
 
+    if (waitpid(pid, & status, 0) == -1) {
+      perror("waitpid error");
+
+    }
+    else if (WIFEXITED(status)) {
+      int exit_status = WEXITSTATUS(status);
       printf("Worker process %d exited with status %d.\n", pid, exit_status);
     }
+    else {
+      printf("Worker process %d terminated abnormally.\n", pid);
+    }
+
+    removeProcessFromTable(pid);
   }
 }
 
@@ -256,7 +276,7 @@ void checkAndLaunchWorkers(SimulatedClock * simClock, PCB processTable[], int pr
   }
 }
 
-void checkForTerminatedChildren(PCB processTable[]) {
+void checkForTerminatedChildren(PCB processTable[], int * currentSimul) {
   int status;
   pid_t pid;
 
@@ -264,6 +284,7 @@ void checkForTerminatedChildren(PCB processTable[]) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
       if (processTable[i].pid == pid) {
         processTable[i].occupied = 0;
+        * currentSimul -= 1;
         printf("Child PID %d terminated.\n", pid);
         break;
       }
@@ -278,7 +299,8 @@ void printProcessTable(SimulatedClock * simClock, PCB processTable[]) {
   for (int i = 0; i < MAX_PROCESSES; i++) {
     if (processTable[i].occupied) {
       printf("%d 1 %d %d %d\n", i, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano);
-    } else {
+    }
+    else {
       printf("%d 0 - - -\n", i);
     }
   }
@@ -293,20 +315,39 @@ void incrementSimulatedClock(SimulatedClock * simClock, int increment) {
 }
 
 void cleanup() {
-    if (simClock != NULL) {
-        shmdt(simClock);
-        simClock = NULL;
+  if (!cleanupDone) {
+    if (simClock != NULL && shmdt(simClock) == -1) {
+      perror("Cleanup shmdt failed");
     }
-    if (shmId != -1) {
-        shmctl(shmId, IPC_RMID, NULL);
-        shmId = -1;
+    if (shmId != -1 && shmctl(shmId, IPC_RMID, NULL) == -1) {
+      perror("Cleanup shmctl failed");
     }
+    printf("Cleanup complete.\n");
+    cleanupDone = true;
+  }
 }
 
-void handle_signal(int signal) {
-    printf("\nReceived signal %d. Cleaning up and exiting...\n", signal);
-    cleanup();
-    exit(EXIT_SUCCESS);
+void handleSignal(int signal) {
+  printf("Caught signal %d. Cleaning up...\n", signal);
+  cleanup();
+  exit(EXIT_FAILURE);
+}
+
+void setupSignalHandler() {
+  struct sigaction sa;
+  sa.sa_handler = handleSignal;
+  sigemptyset( & sa.sa_mask);
+  sa.sa_flags = 0;
+
+  if (sigaction(SIGINT, & sa, NULL) == -1) {
+    perror("Error setting up SIGINT handler");
+    exit(EXIT_FAILURE);
+  }
+  if (sigaction(SIGTERM, & sa, NULL) == -1) {
+    perror("Error setting up SIGTERM handler");
+    exit(EXIT_FAILURE);
+  }
+  atexit(cleanup);
 }
 
 void printCurrentSimulatedTime(SimulatedClock * simClock) {
