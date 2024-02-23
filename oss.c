@@ -197,8 +197,8 @@ void launchWorker(SimulatedClock * simClock, int waitSeconds, int waitNanosecond
     exit(1);
   }
   else if (pid == 0) {
-    char secStr[20];
-    char nanoStr[20];
+    char secStr[12];
+    char nanoStr[12];
 
     sprintf(secStr, "%d", waitSeconds);
     sprintf(nanoStr, "%d", waitNanoseconds);
@@ -231,9 +231,9 @@ void checkAndLaunchWorkers(SimulatedClock * simClock, PCB processTable[], int pr
       if (!processTable[i].occupied) {
         pid_t pid = fork();
         if (pid == 0) {
-          char secStr[10], nanoStr[10];
+          char secStr[12], nanoStr[12];
           snprintf(secStr, sizeof(secStr), "%d", rand() % timelimitForChildren + 1);
-snprintf(nanoStr, sizeof(nanoStr), "%d", rand() % NANOSECOND);
+          snprintf(nanoStr, sizeof(nanoStr), "%d", rand() % NANOSECOND);
           execl("./worker", "worker", secStr, nanoStr, NULL);
           perror("execl failed");
           exit(EXIT_FAILURE);
