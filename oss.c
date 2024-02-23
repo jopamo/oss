@@ -1,10 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <unistd.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <unistd.h>
 #include <time.h>
 #include "shared.h"
 
@@ -13,6 +14,9 @@
 #define SIMULATION_TIME_LIMIT 60
 #define PRINT_INTERVAL 5
 #define WORKER_LAUNCH_INTERVAL 1
+
+SimulatedClock *simClock = NULL;
+int shmId = -1;
 
 typedef struct {
   int occupied;
@@ -32,10 +36,9 @@ void incrementSimulatedClock(SimulatedClock * simClock, int increment);
 void checkAndLaunchWorkers(SimulatedClock * simClock, PCB processTable[], int proc, int simul, int timelimitForChildren, int intervalInMsToLaunchChildren, int * currentSimul, time_t * lastLaunchTime);
 void checkForTerminatedChildren(PCB processTable[]);
 void printProcessTable(SimulatedClock * simClock, PCB processTable[]);
-
-void printCurrentSimulatedTime(SimulatedClock * simClock) {
-  printf("Current Simulated Time: %d seconds, %d nanoseconds\n", simClock -> seconds, simClock -> nanoseconds);
-}
+void cleanup();
+void handle_signal(int signal);
+void printCurrentSimulatedTime(SimulatedClock * simClock);
 
 int main(int argc, char * argv[]) {
   int proc = 5, simul = 3, timelimitForChildren = 7, intervalInMsToLaunchChildren = 100;
@@ -45,6 +48,8 @@ int main(int argc, char * argv[]) {
 
   int currentSimul = 0;
   time_t startTime = time(NULL), currentTime, lastWorkerCheck = 0, lastPrintTime = 0;
+
+  signal(SIGINT, handle_signal);
 
   parseArgs(argc, argv, & proc, & simul, & timelimitForChildren, & intervalInMsToLaunchChildren);
   SimulatedClock * simClock = setupSharedMemory();
@@ -59,6 +64,7 @@ int main(int argc, char * argv[]) {
     }
 
     incrementSimulatedClock(simClock, 1000000);
+    printf("Simulated Time: %d seconds, %d nanoseconds\n", simClock->seconds, simClock->nanoseconds);
 
     if (currentTime - lastWorkerCheck >= 1 && currentSimul < simul) {
       checkAndLaunchWorkers(simClock, processTable, proc, simul, timelimitForChildren, intervalInMsToLaunchChildren, & currentSimul, & lastWorkerCheck);
@@ -226,8 +232,8 @@ void checkAndLaunchWorkers(SimulatedClock * simClock, PCB processTable[], int pr
         pid_t pid = fork();
         if (pid == 0) {
           char secStr[10], nanoStr[10];
-          sprintf(secStr, "%d", rand() % timelimitForChildren + 1);
-          sprintf(nanoStr, "%d", rand() % NANOSECOND);
+          snprintf(secStr, sizeof(secStr), "%d", rand() % timelimitForChildren + 1);
+snprintf(nanoStr, sizeof(nanoStr), "%d", rand() % NANOSECOND);
           execl("./worker", "worker", secStr, nanoStr, NULL);
           perror("execl failed");
           exit(EXIT_FAILURE);
@@ -284,4 +290,25 @@ void incrementSimulatedClock(SimulatedClock * simClock, int increment) {
     simClock -> nanoseconds -= NANOSECOND;
     simClock -> seconds += 1;
   }
+}
+
+void cleanup() {
+    if (simClock != NULL) {
+        shmdt(simClock);
+        simClock = NULL;
+    }
+    if (shmId != -1) {
+        shmctl(shmId, IPC_RMID, NULL);
+        shmId = -1;
+    }
+}
+
+void handle_signal(int signal) {
+    printf("\nReceived signal %d. Cleaning up and exiting...\n", signal);
+    cleanup();
+    exit(EXIT_SUCCESS);
+}
+
+void printCurrentSimulatedTime(SimulatedClock * simClock) {
+  printf("Current Simulated Time: %d seconds, %d nanoseconds\n", simClock -> seconds, simClock -> nanoseconds);
 }
