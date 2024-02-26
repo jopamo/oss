@@ -111,8 +111,13 @@ int main(int argc, char * argv[]) {
       lastPrintTime = currentTime;
     }
 
-    // Sleep briefly to reduce CPU usage during the simulation.
-    usleep(480000);
+    struct timespec req, rem;
+    req.tv_sec = 0; // Seconds
+    req.tv_nsec = 480000 * 1000; // Convert microseconds to nanoseconds
+
+    if (nanosleep(&req, &rem) < 0) {
+      perror("nanosleep"); // Handle errors appropriately
+    }
   }
 
   // Perform cleanup of shared resources before program termination.
