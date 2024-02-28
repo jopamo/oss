@@ -1,49 +1,54 @@
 # Operating System Simulator (OSS)
 
+## Overview
+
+The Operating System Simulator (OSS) is designed to simulate an operating system's process scheduling and inter-process communication using shared memory. This simulation includes a "simulated system clock" and a process table consisting of Process Control Blocks (PCBs) for each process. The OSS manages launching worker processes (`worker`) with specific lifetimes and ensures synchronization using shared memory.
+
 ## Quick Start Guide 🚀
 
 ### Compile the Program
 
-Run the following command in the terminal to compile both the `oss` and `user` executables:
+Compile both the `oss` and `worker` executables by running:
 
-```
+```bash
 make
 ```
 
 ### Running the OSS Program
 
-To start the `oss` program with custom parameters, use the following command structure:
+The `oss` program supports several command-line options to customize the simulation:
 
-```
-./oss -n <total_processes> -s <simultaneous_processes> -t <iterations>
-```
+- `-n <total_processes>`: Set the total number of processes to spawn.
+- `-s <simultaneous_processes>`: Set the maximum number of processes to run simultaneously.
+- `-t <time_limit_for_children>`: Set the time limit (in seconds) for each child process's lifespan.
+- `-i <interval_in_ms_to_launch_children>`: Set the interval (in milliseconds) between launching child processes.
 
-**Example:**
+**Example Command:**
 
-To launch 5 user processes, with no more than 3 running simultaneously, each performing 7 iterations, enter:
+To launch a simulation with 10 total processes, where no more than 5 processes are running simultaneously, each with a random lifespan between 1 to 7 seconds, and launching new processes every 100 milliseconds:
 
-```
-./oss -n 5 -s 3 -t 7
-```
-
-### User Executable Instructions
-
-The `user` executable takes a single command-line argument that specifies the number of iterations it should perform. For example, to run it directly (for testing purposes only) with 5 iterations:
-
-```
-./user 5
+```bash
+./oss -n 10 -s 5 -t 7 -i 100
 ```
 
-**Important:** **The `user` executable is never executed directly under normal operation. Instead, `oss` will be launching that executable at various times.**
+### Worker Executable Instructions
+
+The `worker` executable is launched by `oss` with two command-line arguments specifying its lifespan in seconds and nanoseconds. For example, `oss` might launch a `worker` like so (for internal operation demonstration only):
+
+```bash
+./worker 5 500000
+```
+
+**Note:** The `worker` executable is not intended to be executed directly by the user.
 
 ### Cleaning Up
 
-To remove all compiled files, run:
+To clean up and remove all compiled files, run:
 
-```
+```bash
 make clean
 ```
 
-### Changelog
+## Changelog
 
-For a detailed changelog of all changes, enhancements, and bug fixes, please refer to the [Commit History](https://github.com/jopamo/skeleton_mp/commits/main) on GitHub.
+For a complete list of changes, please refer to the [Commit History](https://github.com/jopamo/skeleton_mp/commits/main) on GitHub.
