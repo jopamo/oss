@@ -1,74 +1,135 @@
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <sched.h>
-#include <sys/shm.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "shared.h"
 
-void processArgs(int argc, char *argv[], int *addSeconds, int *addNanoseconds) {
-    if (argc != 3) {
-        fprintf(stderr, "Error: Incorrect number of arguments.\n");
-        fprintf(stderr, "Usage: %s <seconds> <nanoseconds>\n", argv[0]);
-        exit(EXIT_FAILURE);
-    }
+typedef struct {
+  unsigned int lifespanSeconds;
+  unsigned int lifespanNanoSeconds;
+} WorkerConfig;
 
-    // Validate that arguments are numeric before converting
-    if (!isNumeric(argv[1]) || !isNumeric(argv[2])) {
-        fprintf(stderr, "Error: Both arguments must be numeric.\n");
-        exit(EXIT_FAILURE);
-    }
+typedef struct {
+  SystemClock *sysClock;
+  int msqId;
+  int shmId;
+} SharedResources;
 
-    long long seconds = atoll(argv[1]);
-    long long nanoseconds = atoll(argv[2]);
-
-    // Additional range checking remains unchanged
-    if (seconds < 0 || nanoseconds < 0 || nanoseconds >= 1000000000) {
-        fprintf(stderr, "Error: Seconds must be >= 0, nanoseconds must be between 0 and 999999999.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    *addSeconds = (int)seconds;
-    *addNanoseconds = (int)nanoseconds;
-}
+void parseCommandLineArguments(int argc, char *argv[], WorkerConfig *config);
+void attachToSharedResources(SharedResources *resources);
+void operateWorkerCycle(const WorkerConfig *config, SharedResources *resources);
+int determineTermination(const WorkerConfig *config,
+                         const SystemClock *sysClock);
+void logActivity(const char *message, const char *extraInfo);
+void cleanUpResources(SharedResources *resources);
 
 int main(int argc, char *argv[]) {
-    int addSeconds, addNanoseconds;
+  WorkerConfig config = {0};
+  SharedResources resources = {NULL, -1, -1};
 
-    processArgs(argc, argv, &addSeconds, &addNanoseconds);
+  parseCommandLineArguments(argc, argv, &config);
+  attachToSharedResources(&resources);
 
-    key_t key = getSharedMemoryKey();
-    int shmId = shmget(key, sizeof(SimulatedClock), 0666);
-    if (shmId < 0) {
-        perror("shmget error");
-        exit(EXIT_FAILURE);
+  if (resources.sysClock && resources.msqId != -1) {
+    operateWorkerCycle(&config, &resources);
+  }
+
+  cleanUpResources(&resources);
+  return EXIT_SUCCESS;
+}
+
+void parseCommandLineArguments(int argc, char *argv[], WorkerConfig *config) {
+  if (argc != 3) {
+    fprintf(stderr, "Usage: %s lifespanSeconds lifespanNanoSeconds\n", argv[0]);
+    exit(EXIT_FAILURE);
+  }
+  char *endptr;
+  config->lifespanSeconds = (unsigned int)strtoul(argv[1], &endptr, 10);
+  if (*endptr != '\0') {
+    fprintf(stderr, "Invalid input for lifespanSeconds\n");
+    exit(EXIT_FAILURE);
+  }
+  config->lifespanNanoSeconds = (unsigned int)strtoul(argv[2], &endptr, 10);
+  if (*endptr != '\0') {
+    fprintf(stderr, "Invalid input for lifespanNanoSeconds\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void attachToSharedResources(SharedResources *resources) {
+  resources->shmId = initSharedMemory();
+  if (resources->shmId == -1) {
+    perror("initSharedMemory failed");
+    exit(EXIT_FAILURE);
+  }
+
+  resources->sysClock = attachSharedMemory(resources->shmId);
+  if (resources->sysClock == (void *)-1) {
+    perror("attachSharedMemory failed");
+    cleanupSharedMemory(resources->shmId, resources->sysClock);
+    exit(EXIT_FAILURE);
+  }
+
+  resources->msqId = initMessageQueue();
+  if (resources->msqId == -1) {
+    perror("initMessageQueue failed");
+    cleanupSharedMemory(resources->shmId, resources->sysClock);
+    exit(EXIT_FAILURE);
+  }
+}
+
+void operateWorkerCycle(const WorkerConfig *config,
+                        SharedResources *resources) {
+  Message msg = {.mtype = 1, .mtext = 1};
+  while (1) {
+    if (receiveMessage(resources->msqId, &msg, 1) == -1) {
+      logActivity("Failed to receive message", strerror(errno));
+      break;
     }
 
-    SimulatedClock *simClock = (SimulatedClock *)shmat(shmId, NULL, 0);
-    if (simClock == (void *)-1) {
-        perror("shmat error");
-        exit(EXIT_FAILURE);
-    }
+    if (determineTermination(config, resources->sysClock)) {
+      logActivity("Terminating.", "");
+      msg.mtext = 0;
 
-    // Calculate and wait for the termination time
-    long long termTimeS = simClock->seconds + addSeconds;
-    long long termTimeN = simClock->nanoseconds + addNanoseconds;
-    while (termTimeN >= 1000000000) {
-        termTimeN -= 1000000000;
-        termTimeS += 1;
-    }
+      if (sendMessage(resources->msqId, &msg) == -1) {
+        logActivity("Failed to send termination message", strerror(errno));
+      }
+      break;
+    } else {
+      logActivity("Continuing operation.", "");
 
-    // Busy-wait loop until the calculated termination time
-    while (simClock->seconds < termTimeS || (simClock->seconds == termTimeS && simClock->nanoseconds < termTimeN)) {
-        sched_yield();
+      msg.mtext = 1;
+      if (sendMessage(resources->msqId, &msg) == -1) {
+        logActivity("Failed to send continue operation message",
+                    strerror(errno));
+      }
     }
+  }
+}
 
-    // Detach from shared memory
-    if (shmdt(simClock) == -1) {
-        perror("shmdt error");
-        exit(EXIT_FAILURE);
-    }
+int determineTermination(const WorkerConfig *config,
+                         const SystemClock *sysClock) {
+  unsigned long totalLifespanNS =
+      config->lifespanSeconds * 1000000000UL + config->lifespanNanoSeconds;
+  unsigned long currentNS =
+      sysClock->seconds * 1000000000UL + sysClock->nanoseconds;
+  return currentNS >= totalLifespanNS;
+}
 
-    return 0;
+void logActivity(const char *message, const char *extraInfo) {
+  printf("Worker PID: %d - %s %s\n", getpid(), message, extraInfo);
+}
+
+void cleanUpResources(SharedResources *resources) {
+  if (resources->sysClock) {
+    detachSharedMemory(resources->sysClock);
+  }
+  if (resources->msqId != -1) {
+    cleanupMessageQueue(resources->msqId);
+  }
+  if (resources->shmId != -1) {
+    cleanupSharedMemory(resources->shmId, resources->sysClock);
+  }
 }

@@ -1,545 +1,303 @@
-/*
-Programming language: C
-Programmers: Paul Moses
-Repo: https://github.com/jopamo/skeleton_mp
-
-Date: 2.22.24
-Name of class: CS4760
-
-This program simulates an operating system's process scheduling and inter-process communication
-using shared memory. It consists of two main components: the OSS (Operating System Simulator) and
-worker processes. The OSS manages a simulated clock and a process table, coordinating the launch
-and termination of worker processes based on simulated time.
-*/
-
+#include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <time.h>
-#include <stdbool.h>
-#include <string.h>
+#include <unistd.h>
 
 #include "shared.h"
 
-#define NANOSECOND 10000000 // Number of nanoseconds in a second, used for time calculations
-#define SIMULATION_TIME_LIMIT 60 // Maximum duration of the simulation in real-world seconds
-#define PRINT_INTERVAL 0.5 // Interval in real-world seconds for printing the process table
-#define WORKER_LAUNCH_INTERVAL 1 // Interval in real-world seconds between launching worker processes
+void parseCommandLineArguments(int argc, char* argv[]);
+void initializeSimulationEnvironment();
+void launchWorkerProcess(int index);
+void incrementClock(SystemClock* clock, unsigned int increment);
+int findFreeProcessTableEntry();
+void updateProcessTableOnFork(int index, pid_t pid);
+void updateProcessTableOnTerminate(int index);
+void sendMessageToNextChild();
+void receiveMessageFromChild();
+void possiblyLaunchNewChild();
+void logProcessTable();
+void cleanupAndExit(int signum);
 
-SimulatedClock * simClock = NULL; // Pointer to the simulated clock structure in shared memory
-int shmId = -1; // Shared memory identifier
-bool cleanupDone = false; // Flag to ensure cleanup is performed only once
-int maxProcesses = 0;
+#define MAX_WORKERS 20
 
-typedef struct {
-  int occupied;
-  pid_t pid;
-  int startSeconds;
-  int startNano;
+int shmId;
+SystemClock* sysClock = NULL;
+int msqId;
+
+PCB processTable[MAX_WORKERS];
+
+int lastChildSent = -1;
+int currentChildren;
+
+int maxProcesses = 5;
+int maxSimultaneous = 3;
+int childTimeLimit = 10;
+int launchInterval = 100;
+char logFileName[256] = "oss.log";
+
+void cleanupWrapper(void) { cleanupAndExit(0); }
+
+int main(int argc, char* argv[]) {
+  parseCommandLineArguments(argc, argv);
+  atexit(cleanupWrapper);
+  signal(SIGINT, cleanupAndExit);
+
+  initializeSimulationEnvironment();
+
+  while (true) {
+    incrementClock(sysClock, 1000);
+    possiblyLaunchNewChild();
+    sendMessageToNextChild();
+    receiveMessageFromChild();
+    logProcessTable();
+  }
+
+  return EXIT_SUCCESS;
 }
-PCB;
 
-PCB * processTable = NULL;
+void parseCommandLineArguments(int argc, char* argv[]) {
+  int opt;
 
-void parseArgs(int argc, char * argv[], int * proc, int * simul, int * timelimitForChildren, int * intervalInMsToLaunchChildren);
-SimulatedClock * setupSharedMemory(void);
-void initializeProcessTable(int maxProcesses);
-void incrementSimulatedClock(SimulatedClock * simClock, int increment);
-void checkAndLaunchWorkers(SimulatedClock * simClock, PCB * processTable, int proc, int simul, int timelimitForChildren, int intervalInMsToLaunchChildren, int * currentSimul, time_t * lastLaunchTime);
-void checkForTerminatedChildren(PCB * processTable, int * currentSimul);
-void printProcessTable(SimulatedClock * simClock, PCB * processTable);
-void cleanup();
-void handle_signal(int signal);
-void setupSignalHandler();
-void printCurrentSimulatedTime(SimulatedClock * simClock);
-void terminateAllChildren();
-int isNumeric(const char * str);
+  const char* usage =
+      "Usage: %s [-h] [-n proc] [-s simul] [-t timelimitForChildren] "
+      "[-i intervalInMsToLaunchChildren] [-f logfile]\n";
 
-int main(int argc, char * argv[]) {
-  // Initialize signal handlers for graceful termination.
-  setupSignalHandler();
-
-  // Default simulation parameters.
-  int proc = 5, simul = 3, timelimitForChildren = 7, intervalInMsToLaunchChildren = 100;
-  int currentSimul = 0; // Tracks the number of currently running simulations.
-  int totalLaunched = 0; // Counts how many processes have been launched in total.
-
-  // Parse command-line arguments to adjust simulation parameters.
-  parseArgs(argc, argv, & proc, & simul, & timelimitForChildren, & intervalInMsToLaunchChildren);
-
-  // Echo parsed command-line arguments to ensure correct setup.
-  printf("Parsed command-line arguments:\n");
-  printf("  - Total processes (n): %d\n", proc);
-  printf("  - Simultaneous processes (s): %d\n", simul);
-  printf("  - Time limit for children (t): %d seconds\n", timelimitForChildren);
-  printf("  - Interval for launching children (i): %d milliseconds\n", intervalInMsToLaunchChildren);
-
-  maxProcesses = sysconf(_SC_NPROCESSORS_ONLN); // Get the number of CPU cores
-  printf("Number of CPUs available: %d\n", maxProcesses);
-
-  // Setup shared memory for the simulated clock and initialize the process table.
-  simClock = setupSharedMemory();
-  initializeProcessTable(maxProcesses);
-
-  // Record the start time of the simulation for time limit enforcement.
-  time_t startTime = time(NULL), currentTime, lastWorkerCheck = 0, lastPrintTime = 0;
-  while (1) {
-    currentTime = time(NULL);
-
-    // Check if the simulation has run beyond the real-world time limit.
-    if (currentTime - startTime >= SIMULATION_TIME_LIMIT) {
-      printf("Simulation ends after 60 real-world seconds.\n");
-      break; // Exit the simulation loop.
-    }
-
-    // Increment the simulated clock periodically.
-    incrementSimulatedClock(simClock, 4800000);
-
-    // Check if enough time has elapsed since the last check
-    if (currentTime - lastWorkerCheck < WORKER_LAUNCH_INTERVAL) {
-      //printf("Error: Worker launch interval not met. Waiting for the next interval.\n");
-    }
-    else if (currentSimul >= simul) {
-      // Check if the limit of simultaneous processes has been reached
-      printf("Error: Maximum number of simultaneous processes reached.\n");
-    }
-    else if (totalLaunched >= proc) {
-      // Check if the total number of processes to be launched has been reached
-      printf("Error: Total number of processes to be launched has been reached.\n");
-    }
-    else {
-      // All conditions met, proceed to launch new worker processes
-      checkAndLaunchWorkers(simClock, processTable, proc, simul, timelimitForChildren, intervalInMsToLaunchChildren, & currentSimul, & lastWorkerCheck);
-      lastWorkerCheck = currentTime;
-      totalLaunched++;
-      //printf("Worker process launched successfully.\n");
-    }
-
-    // Periodically check for and handle termination of child processes.
-    checkForTerminatedChildren(processTable, & currentSimul);
-
-    // Print the process table at regular intervals to monitor simulation progress.
-    if (difftime(currentTime, lastPrintTime) >= PRINT_INTERVAL) {
-      printProcessTable(simClock, processTable);
-      lastPrintTime = currentTime;
-    }
-
-    struct timespec req, rem;
-    req.tv_sec = 0; // Seconds
-    req.tv_nsec = 480000 * 1000; // Convert microseconds to nanoseconds
-
-    if (nanosleep( & req, & rem) < 0) {
-      perror("nanosleep"); // Handle errors appropriately
+  while ((opt = getopt(argc, argv, "hn:s:t:i:f:")) != -1) {
+    switch (opt) {
+      case 'h':
+        printf(usage, argv[0]);
+        exit(EXIT_SUCCESS);
+      case 'n':
+        maxProcesses = atoi(optarg);
+        break;
+      case 's':
+        maxSimultaneous = atoi(optarg);
+        break;
+      case 't':
+        childTimeLimit = atoi(optarg);
+        break;
+      case 'i':
+        launchInterval = atoi(optarg);
+        break;
+      case 'f':
+        strncpy(logFileName, optarg, sizeof(logFileName) - 1);
+        break;
+      default:
+        fprintf(stderr, usage, argv[0]);
+        exit(EXIT_FAILURE);
     }
   }
 
-  // Perform cleanup of shared resources before program termination.
-  cleanup();
-
-  return 0;
+  printf("Max Processes: %d\n", maxProcesses);
+  printf("Max Simultaneous: %d\n", maxSimultaneous);
+  printf("Child Time Limit: %d\n", childTimeLimit);
+  printf("Launch Interval: %d\n", launchInterval);
+  printf("Log File: %s\n", logFileName);
 }
 
-void initializeProcessTable(int maxProcesses) {
-  processTable = (PCB * ) calloc(maxProcesses, sizeof(PCB));
-  if (!processTable) {
-    perror("Failed to allocate process table");
+void initializeSimulationEnvironment() {
+  shmId = initSharedMemory();
+  if (shmId == -1) {
+    fprintf(stderr, "Failed to initialize shared memory.\n");
     exit(EXIT_FAILURE);
   }
-}
-
-/**
- * Adds a process to the first unoccupied entry in the process table
- *
- * @param pid The process ID of the worker process
- * @param startSeconds The start time in seconds of the process
- * @param startNano The start time in nanoseconds of the process
- * @return The index of the process table where the process was added or -1 if the table is full
- */
-int addProcessToTable(pid_t pid, int startSeconds, int startNano) {
-  for (int i = 0; i < maxProcesses; i++) {
-    if (!processTable[i].occupied) { // Look for an unoccupied slot
-      processTable[i].pid = pid; // Set PID
-      processTable[i].startSeconds = startSeconds; // Set start seconds
-      processTable[i].startNano = startNano; // Set start nanoseconds
-      processTable[i].occupied = 1; // Mark as occupied
-      printf("Process %d added to table at index %d.\n", pid, i);
-      return i; // Return the index where the process was added
-    }
+  sysClock = attachSharedMemory(shmId);
+  if (sysClock == (void*)-1) {
+    fprintf(stderr, "Failed to attach shared memory.\n");
+    exit(EXIT_FAILURE);
   }
-  printf("Failed to add process %d; table is full.\n", pid);
-  return -1; // Indicate failure to add the process
-}
 
-/**
- * Removes a process from the process table based on its process ID
- *
- * @param pid The process ID of the worker process to remove.
- */
-void removeProcessFromTable(pid_t pid) {
-  for (int i = 0; i < maxProcesses; i++) {
-    if (processTable[i].occupied && processTable[i].pid == pid) { // Match found
-      processTable[i].occupied = 0; // Mark as unoccupied
-      printf("Process %d removed from table.\n", pid);
-      break; // Exit loop once the process is found and removed
-    }
+  sysClock->seconds = 0;
+  sysClock->nanoseconds = 0;
+
+  msqId = initMessageQueue();
+  if (msqId == -1) {
+    fprintf(stderr, "Failed to initialize message queue.\n");
+    exit(EXIT_FAILURE);
   }
+
+  for (int i = 0; i < MAX_PROCESSES; i++) {
+    processTable[i].occupied = 0;
+    processTable[i].pid = -1;
+    processTable[i].startSeconds = 0;
+    processTable[i].startNano = 0;
+  }
+
+  printf("Shared memory initialized (ID: %d).\n", shmId);
+  printf("Message queue initialized (ID: %d).\n", msqId);
+  printf("Process table initialized.\n");
 }
 
-/**
- * Periodically checks if conditions allow for launching new worker processes and initiates their creation.
- *
- * @param simClock Shared simulation clock
- * @param processTable Array representing the process control blocks
- * @param proc Maximum number of processes to be launched in total
- * @param simul Maximum number of processes to be running simultaneously
- * @param timelimitForChildren Upper limit for the random lifespan of child processes
- * @param intervalInMsToLaunchChildren Minimum interval in milliseconds between launching new child processes
- * @param currentSimul Pointer to the count of currently running child processes
- * @param lastLaunchTime Timestamp of the last child process launch
- */
-void checkAndLaunchWorkers(SimulatedClock * simClock, PCB * processTable, int proc, int simul, int timelimitForChildren, int intervalInMsToLaunchChildren, int * currentSimul, time_t * lastLaunchTime) {
-  // Guard clause to prevent launching if limits are reached
-  if ( * currentSimul >= simul || * currentSimul >= proc) return;
+void launchWorkerProcess(int index) {
+  if (index < 0 || index >= MAX_PROCESSES) {
+    fprintf(stderr, "launchWorkerProcess: Index out of bounds.\n");
+    return;
+  }
 
-  time_t currentTime = time(NULL); // Capture the current time
+  pid_t pid = fork();
 
-  // Only proceed if enough time has elapsed since the last launch
-  if (difftime(currentTime, * lastLaunchTime) * 1000 >= intervalInMsToLaunchChildren) {
-    // Iterate over the process table to find an unoccupied slot
-    for (int i = 0; i < maxProcesses && * currentSimul < simul; i++) {
-      if (!processTable[i].occupied) {
-        pid_t pid = fork(); // Fork a new process
-        if (pid == 0) { // Child process logic
-          // Prepare and execute the worker with random lifespan
-          char secStr[12], nanoStr[12];
-          snprintf(secStr, sizeof(secStr), "%d", rand() % timelimitForChildren + 1);
-          snprintf(nanoStr, sizeof(nanoStr), "%d", rand() % NANOSECOND);
-          execl("./worker", "worker", secStr, nanoStr, NULL);
-          perror("execl failed"); // Execution failed
-          exit(EXIT_FAILURE);
-        } else if (pid > 0) { // Parent process logic
-          // Update the process table with the new child's details
-          processTable[i].occupied = 1;
-          processTable[i].pid = pid;
-          processTable[i].startSeconds = simClock -> seconds;
-          processTable[i].startNano = simClock -> nanoseconds;
-          ( * currentSimul) ++; // Increment the count of current simulations
-          * lastLaunchTime = currentTime; // Update the last launch timestamp
-          printf("Launched worker PID: %d\n", pid); // Log the launch
-        } else {
-          perror("fork failed"); // Fork failed
-        }
-        break; // Exit the loop after launching a worker
-      }
-    }
+  if (pid < 0) {
+    perror("Failed to fork");
+    exit(EXIT_FAILURE);
+  } else if (pid == 0) {
+    char shmIdStr[10];
+    char msqIdStr[10];
+
+    snprintf(shmIdStr, sizeof(shmIdStr), "%d", shmId);
+    snprintf(msqIdStr, sizeof(msqIdStr), "%d", msqId);
+
+    execl("./worker", "worker", shmIdStr, msqIdStr, (char*)NULL);
+
+    perror("execl failed to run worker");
+    exit(EXIT_FAILURE);
+  } else {
+    processTable[index].occupied = 1;
+    processTable[index].pid = pid;
+
+    printf("Launched worker process with PID %d at index %d\n", pid, index);
   }
 }
 
-/**
- * Checks for terminated child processes in a non-blocking manner and updates the process table accordingly
- *
- * @param processTable Array of process control blocks to track child processes
- * @param currentSimul Pointer to the count of currently running child processes
- */
-void checkForTerminatedChildren(PCB * processTable, int * currentSimul) {
-  int status; // Variable to capture the exit status of terminated children
-  pid_t pid; // Variable to store the PID of the terminated child
-
-  // Non-blocking check for terminated child processes
-  while ((pid = waitpid(-1, & status, WNOHANG)) > 0) {
-    // Iterate through the process table to find the terminated child
-    for (int i = 0; i < maxProcesses; i++) {
-      if (processTable[i].occupied && processTable[i].pid == pid) {
-        processTable[i].occupied = 0; // Mark the slot as unoccupied
-        ( * currentSimul) --; // Decrement the count of running processes
-        printf("Child PID %d terminated.\n", pid); // Log the termination
-        break; // Exit the loop once the terminated child is handled
-      }
+int findFreeProcessTableEntry() {
+  for (int i = 0; i < MAX_PROCESSES; i++) {
+    if (!processTable[i].occupied) {
+      return i;
     }
+  }
+
+  return -1;
+}
+
+void updateProcessTableOnFork(int index, pid_t pid) {
+  if (index >= 0 && index < MAX_PROCESSES) {
+    processTable[index].occupied = 1;
+    processTable[index].pid = pid;
+
+    processTable[index].startSeconds = sysClock->seconds;
+    processTable[index].startNano = sysClock->nanoseconds;
+
+    printf("Process table updated at index %d with PID %d\n", index, pid);
+  } else {
+    fprintf(stderr, "Invalid index %d for process table.\n", index);
   }
 }
 
-/**
- * Displays the current state of the process table along with the simulated clock time
- *
- * @param simClock Pointer to the simulated clock shared between OSS and worker processes
- * @param processTable Array representing the process control blocks
- */
-void printProcessTable(SimulatedClock * simClock, PCB * processTable) {
-  // Header with the current OSS PID and simulated time
-  printf("OSS PID: %d, SysClockS: %d, SysClockNano: %d\n", getpid(), simClock -> seconds, simClock -> nanoseconds);
-  // Begin process table output
-  printf("\n\nProcess Table:\n");
-  printf("Entry Occupied PID StartS StartN\n");
-  // Loop through each process table entry and print details for occupied slots
-  for (int i = 0; i < maxProcesses; i++) {
+void updateProcessTableOnTerminate(int index) {
+  if (index >= 0 && index < MAX_PROCESSES) {
+    processTable[index].occupied = 0;
+    processTable[index].pid = -1;
+    processTable[index].startSeconds = 0;
+    processTable[index].startNano = 0;
+
+    printf("Process table entry at index %d marked as free.\n", index);
+  } else {
+    fprintf(stderr, "Invalid index %d for process table.\n", index);
+  }
+}
+
+void sendMessageToNextChild() {
+  Message msg;
+  msg.mtype = 1;
+  int startIndex = (lastChildSent + 1) % MAX_PROCESSES;
+  int found = 0;
+
+  for (int i = 0; i < MAX_PROCESSES; i++) {
+    int index = (startIndex + i) % MAX_PROCESSES;
+    if (processTable[index].occupied) {
+      msg.mtext = 1;
+      sendMessage(msqId, &msg);
+      printf("Message sent to child with PID %d\n", processTable[index].pid);
+      lastChildSent = index;
+      found = 1;
+      break;
+    }
+  }
+  if (!found) {
+    printf("No active child processes to send a message to.\n");
+  }
+}
+
+void receiveMessageFromChild() {
+  Message msg;
+
+  if (receiveMessage(msqId, &msg, 2) != -1) {
+    if (msg.mtext == 0) {
+      printf("Received termination message from a child process.\n");
+
+    } else {
+      printf("Received message from child: %d\n", msg.mtext);
+    }
+  } else {
+    perror("Failed to receive message");
+  }
+}
+
+void possiblyLaunchNewChild() {
+  if (currentChildren < maxSimultaneous) {
+    int index = findFreeProcessTableEntry();
+    if (index != -1) {
+      launchWorkerProcess(index);
+      currentChildren++;
+    } else {
+      printf("No free process table entries available.\n");
+    }
+  } else {
+    printf("Maximum number of child processes already running.\n");
+  }
+}
+
+void logProcessTable() {
+  printf("Process Table:\n");
+  printf("Index | Occupied | PID | Start Time (s.ns)\n");
+  for (int i = 0; i < MAX_PROCESSES; i++) {
     if (processTable[i].occupied) {
-      printf("%d 1 %d %d %d\n", i, processTable[i].pid, processTable[i].startSeconds, processTable[i].startNano);
+      printf("%5d | %8d | %3d | %10d.%d\n", i, processTable[i].occupied,
+             processTable[i].pid, processTable[i].startSeconds,
+             processTable[i].startNano);
+    } else {
+      printf("%5d | %8d | --- | -----------\n", i, processTable[i].occupied);
     }
   }
-  printf("\n"); // End of process table output
 }
 
-/**
- * Sends a termination signal to all child processes and waits for them to exit
- */
-void terminateAllChildren() {
-  // Iterate through all potential child processes
-  for (int i = 0; i < maxProcesses; i++) {
+void cleanupAndExit(int signum) {
+  printf("Signal %d received, cleaning up and exiting...\n", signum);
+
+  if (sysClock != NULL) {
+    if (shmdt(sysClock) == -1) {
+      perror("shmdt failed");
+    }
+    sysClock = NULL;
+  }
+
+  if (shmId != -1) {
+    if (shmctl(shmId, IPC_RMID, NULL) == -1) {
+      perror("shmctl IPC_RMID failed");
+    }
+    shmId = -1;
+  }
+
+  if (msqId != -1) {
+    if (msgctl(msqId, IPC_RMID, NULL) == -1) {
+      perror("msgctl IPC_RMID failed");
+    }
+    msqId = -1;
+  }
+
+  for (int i = 0; i < MAX_PROCESSES; i++) {
     if (processTable[i].occupied) {
-      // Send termination signal
-      kill(processTable[i].pid, SIGTERM);
-      // Wait for the process to terminate
+      if (kill(processTable[i].pid, SIGTERM) == -1) {
+        perror("kill failed");
+      }
+
       waitpid(processTable[i].pid, NULL, 0);
-      // Mark the process table entry as unoccupied
       processTable[i].occupied = 0;
     }
   }
-}
 
-/**
- * Attempts to obtain a shared memory segment using a unique key and attaches it to the
- * process's address space to allow manipulation of the simulated clock.
- *
- * @return Pointer to the SimulatedClock structure in shared memory.
- */
-SimulatedClock * setupSharedMemory() {
-  SimulatedClock * simClock;
-
-  key_t key = getSharedMemoryKey();
-  shmId = shmget(key, sizeof(SimulatedClock), 0644 | IPC_CREAT);
-  if (shmId < 0) {
-    perror("shmget error");
-    exit(1);
-  }
-
-  simClock = (SimulatedClock * ) shmat(shmId, NULL, 0);
-  if (simClock == (void * ) - 1) {
-    perror("shmat error");
-    exit(1);
-  }
-
-  printf("Shared memory setup complete.\n");
-  return simClock;
-}
-
-void printUsage(const char * programName) {
-  printf("Usage: %s [options]\n", programName);
-  printf("Options:\n");
-  printf("  -h                        Display this help message and exit\n");
-  printf("  -n <total_processes>      Set the number of total processes to spawn (default: 5)\n");
-  printf("  -s <simultaneous>         Set the number of processes to spawn simultaneously (default: 3)\n");
-  printf("  -t <time_limit>           Set the time limit (in seconds) for each child process (default: 7)\n");
-  printf("  -i <interval>             Set the interval (in milliseconds) between launching children (default: 100)\n");
-  printf("\n");
-  printf("Example:\n");
-  printf("  %s -n 10 -s 5 -t 10 -i 50\n", programName);
-  printf("This command sets up the simulation with 10 total processes, allowing up to 5\n");
-  printf("processes running simultaneously, each with a time limit of 10 seconds, and\n");
-  printf("launching new processes at 50-millisecond intervals.\n");
-}
-
-/**
- * Parses command-line arguments to configure the simulation parameters:
- *
- * @param proc Pointer to store the total number of processes
- * @param simul Pointer to store the maximum number of simultaneous processes
- * @param timelimitForChildren Pointer to store the time limit for child processes
- * @param intervalInMsToLaunchChildren Pointer to store the interval for launching children
- */
-void parseArgs(int argc, char * argv[], int * proc, int * simul, int * timelimitForChildren, int * intervalInMsToLaunchChildren) {
-  for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-      printUsage(argv[0]);
-      exit(EXIT_SUCCESS);
-    }
-  }
-
-  int option;
-  while ((option = getopt(argc, argv, "hn:s:t:i:")) != -1) {
-    switch (option) {
-    case 'h': //just in case
-      printUsage(argv[0]);
-      exit(EXIT_SUCCESS);
-    case 'n':
-      if (isNumeric(optarg)) {
-        * proc = atoi(optarg);
-        printf("Total processes set to: %d\n", * proc);
-      } else {
-        fprintf(stderr, "Option -n requires a numeric argument.\n");
-        exit(EXIT_FAILURE);
-      }
-      break;
-    case 's':
-      if (isNumeric(optarg)) {
-        * simul = atoi(optarg);
-        printf("Simultaneous processes set to: %d\n", * simul);
-      } else {
-        fprintf(stderr, "Option -s requires a numeric argument.\n");
-        exit(EXIT_FAILURE);
-      }
-      break;
-    case 't':
-      if (isNumeric(optarg)) {
-        * timelimitForChildren = atoi(optarg);
-        printf("Time limit for children set to: %d seconds\n", * timelimitForChildren);
-      } else {
-        fprintf(stderr, "Option -t requires a numeric argument.\n");
-        exit(EXIT_FAILURE);
-      }
-      break;
-    case 'i':
-      if (isNumeric(optarg)) {
-        * intervalInMsToLaunchChildren = atoi(optarg);
-        printf("Interval to launch children set to: %d milliseconds\n", * intervalInMsToLaunchChildren);
-      } else {
-        fprintf(stderr, "Option -i requires a numeric argument.\n");
-        exit(EXIT_FAILURE);
-      }
-      break;
-    default:
-      printUsage(argv[0]);
-      exit(EXIT_FAILURE);
-    }
-  }
-}
-
-/**
- * Launches a worker process and manages its lifecycle within the simulation:
- *
- * @param simClock Pointer to the simulated clock, shared between OSS and workers
- * @param waitSeconds Seconds component of the worker's lifespan
- * @param waitNanoseconds Nanoseconds component of the worker's lifespan
- */
-void launchWorker(SimulatedClock * simClock, int waitSeconds, int waitNanoseconds) {
-  pid_t pid = fork(); // Create a new process
-
-  if (pid == -1) {
-    perror("fork error"); // Report if the fork operation fails
-    exit(EXIT_FAILURE);
-  } else if (pid == 0) {
-    // Child process: prepare and execute the worker
-    char secStr[20]; // Buffer for seconds argument
-    char nanoStr[20]; // Buffer for nanoseconds argument
-
-    // Convert wait time to strings for passing as arguments
-    snprintf(secStr, sizeof(secStr), "%d", waitSeconds);
-    snprintf(nanoStr, sizeof(nanoStr), "%d", waitNanoseconds);
-
-    // Execute worker program with time parameters
-    execl("./worker", "worker", secStr, nanoStr, (char * ) NULL);
-
-    // If execl returns, report an error and exit
-    perror("execl error");
-    exit(EXIT_FAILURE);
-  } else {
-    // Parent process: manage the worker
-    // Add worker to process table and record its start time
-    addProcessToTable(pid, simClock -> seconds, simClock -> nanoseconds);
-
-    int status; // For storing the termination status of the child
-
-    // Wait for the worker to terminate
-    if (waitpid(pid, & status, 0) == -1) {
-      perror("waitpid error"); // Report if waiting fails
-    } else if (WIFEXITED(status)) {
-      // Worker exited normally, report its exit status
-      int exit_status = WEXITSTATUS(status);
-      printf("Worker process %d exited with status %d.\n", pid, exit_status);
-    } else {
-      // Worker terminated abnormally, report it
-      printf("Worker process %d terminated abnormally.\n", pid);
-    }
-
-    // Remove the worker from the process table
-    removeProcessFromTable(pid);
-  }
-}
-
-/**
- * Advances the simulation clock by a specified increment
- *
- * @param simClock Pointer to the simulated clock structure
- * @param increment The number of nanoseconds to add to the simulated clock
- */
-void incrementSimulatedClock(SimulatedClock * simClock, int increment) {
-  // Add increment to current nanoseconds, adjusting seconds as needed
-  simClock -> nanoseconds += increment;
-  while (simClock -> nanoseconds >= NANOSECOND) {
-    simClock -> nanoseconds -= NANOSECOND;
-    simClock -> seconds += 1; // Increment seconds when nanoseconds overflow
-  }
-}
-
-/**
- * Handles the cleanup of shared resources and termination of child processes
- * Ensures this operation is performed only once
- */
-void cleanup() {
-  if (!cleanupDone) {
-    // Terminate all child processes still running
-    terminateAllChildren();
-
-    // Detach from shared memory if not already done
-    if (simClock != NULL && shmdt(simClock) == -1) {
-      perror("Cleanup shmdt failed");
-    }
-
-    // Mark shared memory segment for deletion
-    if (shmId != -1 && shmctl(shmId, IPC_RMID, NULL) == -1) {
-      perror("Cleanup shmctl failed");
-    }
-
-    if (processTable != NULL) {
-      free(processTable);
-      processTable = NULL;
-    }
-
-    printf("Cleanup complete\n");
-    cleanupDone = true; // Ensure cleanup only runs once
-  }
-}
-
-/**
- * Responds to signals by cleaning up and exiting the program
- *
- * @param signal The signal number received
- */
-void handleSignal(int signal) {
-  printf("Caught signal %d. Cleaning up\n", signal);
-  cleanup();
-  exit(EXIT_FAILURE); // Terminate the program with a failure status
-}
-
-/**
- * Configures signal handling for graceful shutdown
- */
-void setupSignalHandler() {
-  struct sigaction sa; // Signal action structure
-  sa.sa_handler = handleSignal; // Assign signal handling function
-  sigemptyset( & sa.sa_mask); // Initialize signal set
-  sa.sa_flags = 0; // No flags
-
-  // Setup SIGINT handling
-  if (sigaction(SIGINT, & sa, NULL) == -1) {
-    perror("Error setting up SIGINT handler");
-    exit(EXIT_FAILURE);
-  }
-
-  // Setup SIGTERM handling
-  if (sigaction(SIGTERM, & sa, NULL) == -1) {
-    perror("Error setting up SIGTERM handler");
-    exit(EXIT_FAILURE);
-  }
-}
-
-/**
- * Prints the current simulated time to stdout
- *
- * @param simClock Pointer to the simulated clock shared memory
- */
-void printCurrentSimulatedTime(SimulatedClock * simClock) {
-  printf("Current Simulated Time: %d seconds, %d nanoseconds", simClock -> seconds, simClock -> nanoseconds);
+  exit(signum);
 }

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Operating System Simulator (OSS) is designed to simulate an operating system's process scheduling and inter-process communication using shared memory. This simulation includes a "simulated system clock" and a process table consisting of Process Control Blocks (PCBs) for each process. The OSS manages launching worker processes (`worker`) with specific lifetimes and ensures synchronization using shared memory.
+The Operating System Simulator (OSS) is designed to simulate an operating system's process scheduling and inter-process communication using shared memory. This simulation includes a "simulated system clock" and a process table consisting of Process Control Blocks (PCBs) for each process. The OSS manages launching worker processes (`worker`) with specific lifetimes and ensures synchronization using message queues and shared memory.
 
 ## Quick Start Guide 🚀
 
@@ -22,13 +22,14 @@ The `oss` program supports several command-line options to customize the simulat
 - `-s <simultaneous_processes>`: Set the maximum number of processes to run simultaneously.
 - `-t <time_limit_for_children>`: Set the time limit (in seconds) for each child process's lifespan.
 - `-i <interval_in_ms_to_launch_children>`: Set the interval (in milliseconds) between launching child processes.
+- `-f <logfile>`: Specify the log file for `oss` output.
 
 **Example Command:**
 
-To launch a simulation with 10 total processes, where no more than 5 processes are running simultaneously, each with a random lifespan between 1 to 7 seconds, and launching new processes every 100 milliseconds:
+To launch a simulation with 10 total processes, where no more than 5 processes are running simultaneously, each with a random lifespan between 1 to 7 seconds, and launching new processes every 100 milliseconds, logging to `oss_log.txt`:
 
 ```bash
-./oss -n 10 -s 5 -t 7 -i 100
+./oss -n 10 -s 5 -t 7 -i 100 -f oss_log.txt
 ```
 
 ### Worker Executable Instructions
@@ -48,6 +49,11 @@ To clean up and remove all compiled files, run:
 ```bash
 make clean
 ```
+
+## Development and Contribution
+
+- Ensure you have `git` installed to manage version control.
+- Use the provided Makefile for building the project, which ensures that both `oss` and `worker` are compiled correctly.
 
 ## Changelog
 

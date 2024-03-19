@@ -1,19 +1,43 @@
 #ifndef SHARED_H
 #define SHARED_H
 
+#ifndef DEBUG
+#define DEBUG 1
+#endif
+
 #include <sys/ipc.h>
+#include <sys/msg.h>
 #include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-#define SHM_PATH "/etc/passwd"
-#define SHM_PROJ_ID 'b'
-
-int isNumeric(const char *str);
+#define SHM_KEY 0x1234
+#define MSG_KEY 0x5678
+#define MAX_PROCESSES 20
 
 typedef struct {
-    int seconds;
-    int nanoseconds;
-} SimulatedClock;
+  unsigned int seconds;
+  unsigned int nanoseconds;
+} SystemClock;
 
-key_t getSharedMemoryKey();
+typedef struct {
+  long mtype;
+  int mtext;
+} Message;
 
+typedef struct PCB {
+  int occupied;
+  pid_t pid;
+  int startSeconds;
+  int startNano;
+} PCB;
+
+int initSharedMemory();
+SystemClock* attachSharedMemory(int shmId);
+int initMessageQueue();
+int sendMessage(int msqId, Message* msg);
+int receiveMessage(int msqId, Message* msg, long msgType);
+int detachSharedMemory(SystemClock* shmPtr);
+int cleanupMessageQueue(int msqId);
+int cleanupSharedMemory(int shmId, SystemClock* shmPtr);
 #endif
