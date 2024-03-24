@@ -1,0 +1,14 @@
+# Ignore everything
+*
+
+# Do not ignore directories - necessary to delve into them
+!*/
+
+# Allow specific files and directories
+!Makefile
+!README
+!README.md
+!bin/
+!clean.sh
+!include/*
+!src/*
