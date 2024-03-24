@@ -25,6 +25,7 @@ int main(int argc, char* argv[]) {
     exit(parseStatus == 1 ? EXIT_SUCCESS : EXIT_FAILURE);
   }
 
+  msqId = initMessageQueue();
   shmId = initSharedMemory();
   simClock = attachSharedMemory(shmId);
 

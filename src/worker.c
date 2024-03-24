@@ -14,6 +14,7 @@ int main(int argc, char *argv[]) {
 
   shmId = initSharedMemory();
   simClock = attachSharedMemory(shmId);
+  msqId = initMessageQueue();
 
   operateWorkerCycle(&config);
 

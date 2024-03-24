@@ -32,7 +32,6 @@ void initializeSimulationEnvironment() {
   simClock->seconds = 0;
   simClock->nanoseconds = 0;
 
-  msqId = initMessageQueue();
   if (msqId == -1) {
     fprintf(stderr, "Failed to initialize message queue.\n");
     exit(EXIT_FAILURE);
