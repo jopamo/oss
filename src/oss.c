@@ -1,69 +1,63 @@
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/time.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
 #include "cleanup.h"
-#include "init.h"
-#include "ipc.h"
 #include "process.h"
 #include "shared.h"
 #include "time.h"
 
-extern SystemClock* sysClock;
-extern PCB processTable[MAX_WORKERS];
-extern FILE* logFile;
-extern char logFileName[256];
-extern volatile sig_atomic_t cleanupInitiated;
-extern int msqId;
-
-int maxProcesses = 5;
-int maxSimultaneous = 10;
-int childTimeLimit = 10;
-int launchInterval = 1000;
-volatile sig_atomic_t keepRunning = 1;
-
-void parseCommandLineArguments(int argc, char* argv[]);
-void manageProcesses();
+int isNumber(const char* str);
+int parseCommandLineArguments(int argc, char* argv[]);
 void sendTerminationMessages();
 
-void alarmHandler(int sig) {
-  sendTerminationMessages();
-  keepRunning = 0;
-}
+void incrementClockPerChild();
 
 int main(int argc, char* argv[]) {
-  parseCommandLineArguments(argc, argv);
+  srand(time(NULL));
+
+  gProcessType = PROCESS_TYPE_OSS;
 
   setupSignalHandlers();
   atexit(atexitHandler);
 
-  initializeSimulationEnvironment();
-  logFile = fopen(logFileName, "w+");
+#ifdef DEBUG
 
-  pid_t timeKeeperPid = fork();
-  if (timeKeeperPid == 0) {
-    while (keepRunning) {
-      incrementClock(sysClock, 3.8);
-    }
-    _Exit(EXIT_SUCCESS);
+#endif
+
+  int parseStatus = parseCommandLineArguments(argc, argv);
+  if (parseStatus != 0) {
+    cleanupResources();
+    exit(parseStatus == 1 ? EXIT_SUCCESS : EXIT_FAILURE);
+  }
+
+  shmId = initSharedMemory();
+  simClock = attachSharedMemory(shmId);
+
+  initializeSimulationEnvironment();
+
+  logFile = fopen(logFileName, "w+");
+  if (!logFile) {
+    perror("Failed to open log file");
+    exit(EXIT_FAILURE);
   }
 
   while (keepRunning) {
     manageProcesses();
+    incrementClockPerChild();
     usleep(500000);
   }
 
-  waitpid(timeKeeperPid, NULL, 0);
-
+  fclose(logFile);
+  cleanupResources();
   return EXIT_SUCCESS;
 }
 
-void parseCommandLineArguments(int argc, char* argv[]) {
+int isNumber(const char* str) {
+  char* end;
+  long val = strtol(str, &end, 10);
+  return *end == '\0' && val > 0 && val <= INT_MAX;
+}
+
+int parseCommandLineArguments(int argc, char* argv[]) {
   int opt;
+  int sFlag = 0, tFlag = 0, iFlag = 0, fFlag = 0;
   const char* usage =
       "Usage: %s [-h] [-n proc] [-s simul] [-t timelimitForChildren] "
       "[-i intervalInMsToLaunchChildren] [-f logfile]\n";
@@ -72,66 +66,108 @@ void parseCommandLineArguments(int argc, char* argv[]) {
     switch (opt) {
       case 'h':
         printf(usage, argv[0]);
-        exit(EXIT_SUCCESS);
+        return 1;
       case 'n':
-        maxProcesses = atoi(optarg);
+        if (isNumber(optarg)) {
+          maxProcesses = atoi(optarg);
+        } else {
+          fprintf(stderr, "Error: Invalid number for -n option.\n");
+          return 2;
+        }
         break;
       case 's':
-        maxSimultaneous = atoi(optarg);
+        sFlag = 1;
+        if (isNumber(optarg)) {
+          maxSimultaneous = atoi(optarg);
+        } else {
+          fprintf(stderr, "Error: Invalid number for -s option.\n");
+          return 3;
+        }
         break;
       case 't':
-        childTimeLimit = atoi(optarg);
+        tFlag = 1;
+        if (isNumber(optarg)) {
+          childTimeLimit = atoi(optarg);
+        } else {
+          fprintf(stderr, "Error: Invalid number for -t option.\n");
+          return 4;
+        }
         break;
       case 'i':
-        launchInterval = atoi(optarg);
+        iFlag = 1;
+        if (isNumber(optarg)) {
+          launchInterval = atoi(optarg);
+        } else {
+          fprintf(stderr, "Error: Invalid number for -i option.\n");
+          return 5;
+        }
         break;
       case 'f':
+        fFlag = 1;
         strncpy(logFileName, optarg, sizeof(logFileName) - 1);
-        logFile = fopen(logFileName, "w+");
-        if (!logFile) {
-          perror("Failed to open log file");
-          exit(EXIT_FAILURE);
-        }
+        logFileName[sizeof(logFileName) - 1] = '\0';
         break;
       default:
         fprintf(stderr, usage, argv[0]);
-        exit(EXIT_FAILURE);
+        return -1;
     }
   }
 
-  printf("Max Processes: %d\n", maxProcesses);
-  printf("Max Simultaneous: %d\n", maxSimultaneous);
-  printf("Child Time Limit: %d\n", childTimeLimit);
-  printf("Launch Interval: %d ms\n", launchInterval);
-  printf("Log File: %s\n", logFileName);
-}
-
-void manageProcesses() {
-  static struct timeval lastLaunchTime = {0};
-  struct timeval currentTime, diffTime;
-  gettimeofday(&currentTime, NULL);
-
-  timersub(&currentTime, &lastLaunchTime, &diffTime);
-  int diffMs = diffTime.tv_sec * 1000 + diffTime.tv_usec / 1000;
-
-  if (diffMs >= launchInterval) {
-    possiblyLaunchNewChild();
-    lastLaunchTime = currentTime;
+  if (!sFlag) maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
+  if (!tFlag) childTimeLimit = DEFAULT_CHILD_TIME_LIMIT;
+  if (!iFlag) launchInterval = DEFAULT_LAUNCH_INTERVAL;
+  if (!fFlag) {
+    strncpy(logFileName, DEFAULT_LOG_FILE_NAME, sizeof(logFileName));
+    logFileName[sizeof(logFileName) - 1] = '\0';
   }
 
-  static struct timeval lastLogTime = {0};
-  timersub(&currentTime, &lastLogTime, &diffTime);
-  if ((diffTime.tv_sec * 1000 + diffTime.tv_usec / 1000) >= 500) {
-    logProcessTable();
-    lastLogTime = currentTime;
+  logFile = fopen(logFileName, "w+");
+  if (!logFile) {
+    perror("Failed to open log file");
+    return 6;
   }
+
+#ifdef DEBUG
+  printf("Debug Info:\n");
+  printf("\tMax Processes: %d\n", maxProcesses);
+  printf("\tMax Simultaneous: %d\n", maxSimultaneous);
+  printf("\tChild Time Limit: %d\n", childTimeLimit);
+  printf("\tLaunch Interval: %d ms\n", launchInterval);
+  printf("\tLog File: %s\n", logFileName);
+#endif
+
+  return 0;
 }
 
 void sendTerminationMessages() {
   Message msg = {.mtype = 1, .mtext = -1};
-  for (int i = 0; i < MAX_WORKERS; i++) {
+  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
     if (processTable[i].occupied) {
-      sendMessage(msqId, &msg);
+      sendMessage(&msg);
+      processTable[i].occupied = 0;
+    }
+  }
+}
+
+void incrementClockPerChild() {
+  int activeChildren = 0;
+  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
+    if (processTable[i].occupied) {
+      activeChildren++;
+    }
+  }
+
+  if (activeChildren > 0) {
+    float increment = 250.0f / activeChildren;
+    int incrementSec = (int)increment / 1000;
+    int incrementNano = ((int)increment % 1000) * 1000000;
+
+    simClock->seconds += incrementSec;
+    simClock->nanoseconds += incrementNano;
+
+    if (simClock->nanoseconds >= 1000000000) {
+      simClock->seconds++;
+      simClock->nanoseconds -= 1000000000;
     }
   }
 }

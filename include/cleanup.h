@@ -3,10 +3,9 @@
 
 #include <signal.h>
 
-
-void cleanup();
-void cleanupAndExit(int signum);
 void atexitHandler();
 void signalHandler(int sig);
+void setupSignalHandlers(void);
+void cleanupResources(void);
 
-#endif 
+#endif
