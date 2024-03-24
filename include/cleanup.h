@@ -7,5 +7,7 @@ void atexitHandler();
 void signalHandler(int sig);
 void setupSignalHandlers(void);
 void cleanupResources(void);
+int cleanupMessageQueue();
+int cleanupSharedMemory();
 
 #endif

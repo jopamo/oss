@@ -31,30 +31,33 @@
 #define DEFAULT_LOG_FILE_NAME "oss.log"
 
 typedef struct {
-    unsigned long seconds;
-    unsigned long nanoseconds;
+  long seconds;
+  long nanoseconds;
+} ElapsedTime;
+
+typedef struct {
+  unsigned long seconds;
+  unsigned long nanoseconds;
 } SimulatedClock;
 
 typedef struct {
-    long mtype;
-    int mtext;
+  long mtype;
+  int mtext;
 } Message;
 
 typedef struct PCB {
-    int occupied;
-    pid_t pid;
-    unsigned int startSeconds;
-    unsigned int startNano;
+  int occupied;
+  pid_t pid;
+  unsigned int startSeconds;
+  unsigned int startNano;
 } PCB;
 
-typedef enum {
-    PROCESS_TYPE_OSS,
-    PROCESS_TYPE_WORKER
-} ProcessType;
+typedef enum { PROCESS_TYPE_OSS, PROCESS_TYPE_WORKER } ProcessType;
 
 extern ProcessType gProcessType;
 
 extern struct timeval startTime;
+extern struct timeval lastLogTime;
 extern SimulatedClock* simClock;
 extern PCB processTable[DEFAULT_MAX_PROCESSES];
 extern FILE* logFile;
@@ -78,16 +81,16 @@ int initSharedMemory();
 key_t getSharedMemoryKey();
 SimulatedClock* attachSharedMemory();
 int detachSharedMemory(SimulatedClock* shmPtr);
-int cleanupSharedMemory();
 
 int initMessageQueue();
 int sendMessage(Message* msg);
 int receiveMessage(Message* msg, long msgType, int flags);
-int cleanupMessageQueue();
 
 int getCurrentChildren();
 void setCurrentChildren(int value);
 void sendMessageToNextChild();
 void receiveMessageFromChild();
+
+ElapsedTime elapsedTimeSince(const struct timeval* lastTime);
 
 #endif

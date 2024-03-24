@@ -64,3 +64,32 @@ void setupSignalHandlers(void) {
 }
 
 void atexitHandler(void) { cleanupResources(); }
+
+int cleanupSharedMemory() {
+  if (shmId < 0) {
+    return -1;
+  }
+
+  if (simClock != NULL && detachSharedMemory(simClock) < 0) {
+    return -1;
+  }
+
+  if (shmctl(shmId, IPC_RMID, NULL) == -1) {
+    perror("shmctl");
+    return -1;
+  }
+
+  log_debug("Cleaned up shared memory successfully.");
+  shmId = -1;
+  simClock = NULL;
+  return 0;
+}
+
+int cleanupMessageQueue() {
+  if (msgctl(msqId, IPC_RMID, NULL) == -1) {
+    perror("msgctl");
+    return -1;
+  }
+  log_debug("Cleaned up message queue successfully.");
+  return 0;
+}

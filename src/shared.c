@@ -2,6 +2,7 @@
 
 ProcessType gProcessType;
 struct timeval startTime;
+struct timeval lastLogTime;
 SimulatedClock* simClock = NULL;
 PCB processTable[DEFAULT_MAX_PROCESSES];
 FILE* logFile = NULL;
@@ -26,6 +27,7 @@ void initializeSimulationEnvironment() {
   printf("Number of CPUs available: %d\n", maxProcesses);
 
   gettimeofday(&startTime, NULL);
+  gettimeofday(&lastLogTime, NULL);
 
   simClock->seconds = 0;
   simClock->nanoseconds = 0;
@@ -123,26 +125,6 @@ int detachSharedMemory(SimulatedClock* shmPtr) {
   return 0;
 }
 
-int cleanupSharedMemory() {
-  if (shmId < 0) {
-    return -1;
-  }
-
-  if (simClock != NULL && detachSharedMemory(simClock) < 0) {
-    return -1;
-  }
-
-  if (shmctl(shmId, IPC_RMID, NULL) == -1) {
-    perror("shmctl");
-    return -1;
-  }
-
-  log_debug("Cleaned up shared memory successfully.");
-  shmId = -1;
-  simClock = NULL;
-  return 0;
-}
-
 int initMessageQueue() {
   msqId = msgget(MSG_KEY, IPC_CREAT | 0666);
   if (msqId < 0) {
@@ -154,10 +136,8 @@ int initMessageQueue() {
 }
 
 int sendMessage(Message* msg) {
-  if (msgsnd(msqId, (void*)msg,
-             sizeof(Message) - sizeof(long),
-             IPC_NOWAIT) < 0) {
-    perror("msgsnd failed");
+  if (msgsnd(msqId, (void*)msg, sizeof(Message) - sizeof(long), IPC_NOWAIT) <
+      0) {
     log_debug("Failed to send message: Type=%ld, Text=%d, Error=%s", msg->mtype,
               msg->mtext, strerror(errno));
     return -1;
@@ -167,13 +147,10 @@ int sendMessage(Message* msg) {
   return 0;
 }
 
-int receiveMessage(Message* msg,
-                   long msgType,
-                   int flags) {
+int receiveMessage(Message* msg, long msgType, int flags) {
   if (msgrcv(msqId, (void*)msg, sizeof(Message) - sizeof(long), msgType,
              flags) < 0) {
     if (errno != ENOMSG) {
-      perror("msgrcv failed");
       log_debug("Failed to receive message: Type=%ld, Queue ID=%d, Error=%s",
                 msgType, msqId, strerror(errno));
     }
@@ -182,26 +159,6 @@ int receiveMessage(Message* msg,
 
   log_debug("Message received successfully from queue ID %d.", msqId);
   return 0;
-}
-
-void sendMessageToNextChild() {
-  Message msg = {.mtype = 1, .mtext = 1};
-  int startIndex = (lastChildSent + 1) % DEFAULT_MAX_PROCESSES;
-  int found = 0;
-
-  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
-    int index = (startIndex + i) % DEFAULT_MAX_PROCESSES;
-    if (processTable[index].occupied) {
-      sendMessage(&msg);
-      log_debug("Message sent to child with PID %d.", processTable[index].pid);
-      lastChildSent = index;
-      found = 1;
-      break;
-    }
-  }
-  if (!found) {
-    log_debug("No active child processes to send a message to.");
-  }
 }
 
 void receiveMessageFromChild() {
@@ -224,11 +181,13 @@ void receiveMessageFromChild() {
   }
 }
 
-int cleanupMessageQueue() {
-  if (msgctl(msqId, IPC_RMID, NULL) == -1) {
-    perror("msgctl");
-    return -1;
-  }
-  log_debug("Cleaned up message queue successfully.");
-  return 0;
+ElapsedTime elapsedTimeSince(const struct timeval* lastTime) {
+  struct timeval now, diff;
+  gettimeofday(&now, NULL);
+  timersub(&now, lastTime, &diff);
+
+  ElapsedTime elapsedTime;
+  elapsedTime.seconds = diff.tv_sec;
+  elapsedTime.nanoseconds = diff.tv_usec * 1000;
+  return elapsedTime;
 }

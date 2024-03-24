@@ -1,10 +1,8 @@
 #include "process.h"
 #include "shared.h"
 
-void launchWorkerProcess(int index,
-                         unsigned int lifespanSec,
+void launchWorkerProcess(int index, unsigned int lifespanSec,
                          unsigned int lifespanNSec) {
-
   if (index < 0 || index >= DEFAULT_MAX_PROCESSES) {
     fprintf(stderr, "launchWorkerProcess: Index out of bounds.\n");
     return;
@@ -22,14 +20,19 @@ void launchWorkerProcess(int index,
     exit(EXIT_FAILURE);
   } else if (pid == 0) {
     execl("./worker", "worker", lifespanSecStr, lifespanNSecStr, (char *)NULL);
-
     perror("execl failed to run worker");
     exit(EXIT_FAILURE);
   } else {
+    ElapsedTime elapsed = elapsedTimeSince(&startTime);
     processTable[index].occupied = 1;
     processTable[index].pid = pid;
+    processTable[index].startSeconds = elapsed.seconds;
+    processTable[index].startNano = elapsed.nanoseconds;
 
-    printf("Launched worker process with PID %d at index %d\n", pid, index);
+    printf(
+        "Launched worker process with PID %d at index %d, start time: %ld sec, "
+        "%ld ns\n",
+        pid, index, elapsed.seconds, elapsed.nanoseconds);
   }
 }
 
