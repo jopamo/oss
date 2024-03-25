@@ -3,11 +3,13 @@
 
 #include <signal.h>
 
-void atexitHandler();
-void signalHandler(int sig);
-void setupSignalHandlers(void);
+void atexitHandler(void);
 void cleanupResources(void);
-int cleanupMessageQueue();
-int cleanupSharedMemory();
+int cleanupMessageQueue(void);
+int cleanupSharedMemory(void);
+void killAllWorkers(void);
+void setupSignalHandlers(void);
+void cleanupAndExit(void);
+void signalHandler(int sig);
 
 #endif

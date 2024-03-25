@@ -18,12 +18,13 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SHM_KEY 0x6234
-#define MSG_KEY 0x5678
+#define MSG_PATH "/tmp"
+#define MSG_PROJ_ID 'a'
 
-#define SHM_PATH "/etc/passwd"
+#define SHM_PATH "/tmp"
 #define SHM_PROJ_ID 'b'
 
+#define MAX_RUNTIME 60
 #define DEFAULT_MAX_PROCESSES 5
 #define DEFAULT_MAX_SIMULTANEOUS 10
 #define DEFAULT_CHILD_TIME_LIMIT 10
@@ -31,8 +32,8 @@
 #define DEFAULT_LOG_FILE_NAME "oss.log"
 
 typedef struct {
-  long seconds;
-  long nanoseconds;
+  unsigned long seconds;
+  unsigned long nanoseconds;
 } ElapsedTime;
 
 typedef struct {
@@ -58,11 +59,10 @@ extern ProcessType gProcessType;
 
 extern struct timeval startTime;
 extern struct timeval lastLogTime;
-extern SimulatedClock* simClock;
+extern SimulatedClock *simClock;
 extern PCB processTable[DEFAULT_MAX_PROCESSES];
-extern FILE* logFile;
+extern FILE *logFile;
 extern char logFileName[256];
-extern volatile sig_atomic_t cleanupInitiated;
 extern volatile sig_atomic_t keepRunning;
 extern int msqId;
 extern int shmId;
@@ -73,24 +73,25 @@ extern int childTimeLimit;
 extern int launchInterval;
 extern int currentChildren;
 
-void initializeSimulationEnvironment();
+void log_debug(const char *format, ...);
+void log_error(const char *format, ...);
 
-void log_debug(const char* format, ...);
+int initSharedMemory(void);
+key_t getSharedMemoryKey(void);
+SimulatedClock *attachSharedMemory(void);
+int initMessageQueue(void);
+int getCurrentChildren(void);
+void sendMessageToNextChild(void);
 
-int initSharedMemory();
-key_t getSharedMemoryKey();
-SimulatedClock* attachSharedMemory();
-int detachSharedMemory(SimulatedClock* shmPtr);
+int detachSharedMemory(void);
 
-int initMessageQueue();
-int sendMessage(Message* msg);
-int receiveMessage(Message* msg, long msgType, int flags);
+int sendMessage(int msqId, Message *msg);
+int receiveMessage(int msqId, Message *msg, long msgType, int flags);
 
-int getCurrentChildren();
 void setCurrentChildren(int value);
-void sendMessageToNextChild();
-void receiveMessageFromChild();
+int receiveMessageFromChild(Message *msg, int childIndex);
+void updateProcessTableEntry(int childIndex);
 
-ElapsedTime elapsedTimeSince(const struct timeval* lastTime);
+ElapsedTime elapsedTimeSince(const struct timeval *lastTime);
 
 #endif

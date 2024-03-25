@@ -9,8 +9,8 @@ typedef struct {
 } WorkerConfig;
 
 void workerArgs(int argc, char *argv[], WorkerConfig *config);
-int ossArgs(int argc, char* argv[]);
-int isNumber(const char* str);
+int ossArgs(int argc, char *argv[]);
+int isNumber(const char *str);
 void printOSSUsage(const char *programName);
 
 #endif

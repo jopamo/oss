@@ -3,9 +3,9 @@
 ProcessType gProcessType;
 struct timeval startTime;
 struct timeval lastLogTime;
-SimulatedClock* simClock = NULL;
+SimulatedClock *simClock = NULL;
 PCB processTable[DEFAULT_MAX_PROCESSES];
-FILE* logFile = NULL;
+FILE *logFile = NULL;
 char logFileName[256] = DEFAULT_LOG_FILE_NAME;
 volatile sig_atomic_t keepRunning = 1;
 int msqId = -1;
@@ -19,58 +19,64 @@ int launchInterval = DEFAULT_LAUNCH_INTERVAL;
 int currentChildren = 0;
 int lastChildSent = 0;
 
-int getCurrentChildren() { return currentChildren; }
+int getCurrentChildren(void) { return currentChildren; }
 void setCurrentChildren(int value) { currentChildren = value; }
 
-void initializeSimulationEnvironment() {
-  maxProcesses = sysconf(_SC_NPROCESSORS_ONLN);
-  printf("Number of CPUs available: %d\n", maxProcesses);
+void log_debug(const char *format, ...) {
+  struct timeval now;
+  gettimeofday(&now, NULL);
 
-  gettimeofday(&startTime, NULL);
-  gettimeofday(&lastLogTime, NULL);
+  char timeBuffer[64];
+  strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S",
+           localtime(&now.tv_sec));
 
-  simClock->seconds = 0;
-  simClock->nanoseconds = 0;
+  fprintf(stderr, "[%s] [DEBUG] [%s] ", timeBuffer,
+          (gProcessType == PROCESS_TYPE_OSS) ? "OSS" : "Worker");
 
-  if (msqId == -1) {
-    fprintf(stderr, "Failed to initialize message queue.\n");
-    exit(EXIT_FAILURE);
-  }
-
-  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
-    processTable[i].occupied = 0;
-    processTable[i].pid = -1;
-    processTable[i].startSeconds = 0;
-    processTable[i].startNano = 0;
-  }
-
-  logFile = fopen(logFileName, "w");
-  if (logFile == NULL) {
-    fprintf(stderr, "Failed to open log file %s\n", logFileName);
-    exit(EXIT_FAILURE);
-  }
-
-  printf("Shared memory initialized (ID: %d).\n", shmId);
-  printf("Message queue initialized (ID: %d).\n", msqId);
-  printf("Process table initialized.\n");
-  printf("Log file %s opened.\n", logFileName);
-}
-
-void log_debug(const char* format, ...) {
   va_list args;
-  const char* prefix =
-      (gProcessType == PROCESS_TYPE_OSS) ? "[OSS]" : "[Worker]";
-
-  fprintf(stderr, "%s ", prefix);
-
   va_start(args, format);
   vfprintf(stderr, format, args);
   va_end(args);
-
   fprintf(stderr, "\n");
+
+  if (logFile != NULL) {
+    fprintf(logFile, "[%s] [DEBUG] [%s] ", timeBuffer,
+            (gProcessType == PROCESS_TYPE_OSS) ? "OSS" : "Worker");
+    va_start(args, format);
+    vfprintf(logFile, format, args);
+    va_end(args);
+    fprintf(logFile, "\n");
+  }
 }
 
-int initSharedMemory() {
+void log_error(const char *format, ...) {
+  struct timeval now;
+  gettimeofday(&now, NULL);
+
+  char timeBuffer[64];
+  strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S",
+           localtime(&now.tv_sec));
+
+  fprintf(stderr, "[%s] [ERROR] [%s] ", timeBuffer,
+          (gProcessType == PROCESS_TYPE_OSS) ? "OSS" : "Worker");
+
+  va_list args;
+  va_start(args, format);
+  vfprintf(stderr, format, args);
+  va_end(args);
+  fprintf(stderr, "\n");
+
+  if (logFile != NULL) {
+    fprintf(logFile, "[%s] [ERROR] [%s] ", timeBuffer,
+            (gProcessType == PROCESS_TYPE_OSS) ? "OSS" : "Worker");
+    va_start(args, format);
+    vfprintf(logFile, format, args);
+    va_end(args);
+    fprintf(logFile, "\n");
+  }
+}
+
+int initSharedMemory(void) {
   key_t key = getSharedMemoryKey();
   shmId = shmget(key, sizeof(SimulatedClock), 0644 | IPC_CREAT);
 
@@ -83,17 +89,17 @@ int initSharedMemory() {
   return shmId;
 }
 
-key_t getSharedMemoryKey() { return ftok(SHM_PATH, SHM_PROJ_ID); }
+key_t getSharedMemoryKey(void) { return ftok(SHM_PATH, SHM_PROJ_ID); }
 
-SimulatedClock* attachSharedMemory() {
+SimulatedClock *attachSharedMemory(void) {
   if (shmId < 0) {
     log_debug("Attempt to attach to shared memory failed: Invalid shmId=%d",
               shmId);
     return NULL;
   }
 
-  SimulatedClock* shmPtr = (SimulatedClock*)shmat(shmId, NULL, 0);
-  if (shmPtr == (SimulatedClock*)-1) {
+  SimulatedClock *simClock = (SimulatedClock *)shmat(shmId, NULL, 0);
+  if (simClock == (SimulatedClock *)-1) {
     perror("shmat");
 
     if (gProcessType == PROCESS_TYPE_OSS) {
@@ -102,30 +108,41 @@ SimulatedClock* attachSharedMemory() {
       log_debug("[Worker] Failed to attach to shared memory with shmId=%d",
                 shmId);
     } else {
-      log_debug(
-          "Unknown process type failed to attach to shared memory with "
-          "shmId=%d",
-          shmId);
+      log_debug("Unknown process type failed to attach to shared memory with "
+                "shmId=%d",
+                shmId);
     }
     return NULL;
   }
   log_debug("Attached shared memory successfully, shmId=%d", shmId);
-  return shmPtr;
+  return simClock;
 }
 
-int detachSharedMemory(SimulatedClock* shmPtr) {
-  log_debug("Attempting to detach shared memory.");
-  if (shmdt(shmPtr) == -1) {
-    perror("shmdt");
-    log_debug("Failed to detach shared memory.");
-    return -1;
+int detachSharedMemory(void) {
+  if (simClock != NULL) {
+    if (shmdt(simClock) == -1) {
+      perror("shmdt");
+      log_error("Failed to detach shared memory.");
+      return -1;
+    }
+    simClock = NULL;
+    log_debug("Successfully detached shared memory.");
+  } else {
+    log_debug("Shared memory was not attached or already detached.");
   }
-  log_debug("Successfully detached shared memory.");
   return 0;
 }
 
-int initMessageQueue() {
-  msqId = msgget(MSG_KEY, IPC_CREAT | 0666);
+int initMessageQueue(void) {
+  key_t msg_key = ftok(MSG_PATH, MSG_PROJ_ID);
+
+  if (msg_key == -1) {
+    perror("ftok for msg_key failed");
+    exit(EXIT_FAILURE);
+  }
+
+  msqId = msgget(msg_key, IPC_CREAT | 0666);
+
   if (msqId < 0) {
     perror("msgget");
     return -1;
@@ -134,59 +151,40 @@ int initMessageQueue() {
   return msqId;
 }
 
-int sendMessage(Message* msg) {
-  if (msgsnd(msqId, (void*)msg, sizeof(Message) - sizeof(long), IPC_NOWAIT) <
-      0) {
-    log_debug("Failed to send message: Type=%ld, Text=%d, Error=%s", msg->mtype,
-              msg->mtext, strerror(errno));
+int sendMessage(int msqId, Message *msg) {
+
+  log_debug("[SEND] Preparing to send. mtype: %ld, mtext: %d", msg->mtype,
+            msg->mtext);
+
+  if (msgsnd(msqId, msg, sizeof(*msg) - sizeof(long), 0) == -1) {
+    log_error("[SEND] Failed to send message. mtype: %ld, Error: %s",
+              msg->mtype, strerror(errno));
     return -1;
   }
 
-  log_debug("Message sent successfully to queue ID %d.", msqId);
+  log_debug("[SEND] Message sent successfully. mtype: %ld", msg->mtype);
   return 0;
 }
 
-int receiveMessage(Message* msg, long msgType, int flags) {
-  if (msgrcv(msqId, (void*)msg, sizeof(Message) - sizeof(long), msgType,
-             flags) < 0) {
-    if (errno != ENOMSG) {
-      log_debug("Failed to receive message: Type=%ld, Queue ID=%d, Error=%s",
-                msgType, msqId, strerror(errno));
+int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
+
+  log_debug("[RECEIVE] Waiting for message. Expected mtype: %ld", msgType);
+
+  ssize_t result =
+      msgrcv(msqId, msg, sizeof(*msg) - sizeof(long), msgType, flags);
+  if (result == -1) {
+
+    if (errno == ENOMSG) {
+      log_debug("[RECEIVE] No message available for mtype: %ld", msgType);
+    } else {
+      log_error(
+          "[RECEIVE] Failed to receive message. Expected mtype: %ld, Error: %s",
+          msgType, strerror(errno));
     }
     return -1;
   }
 
-  log_debug("Message received successfully from queue ID %d.", msqId);
+  log_debug("[RECEIVE] Message received successfully. mtype: %ld, mtext: %d",
+            msg->mtype, msg->mtext);
   return 0;
-}
-
-void receiveMessageFromChild() {
-  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
-    if (processTable[i].occupied) {
-      Message msg;
-      if (receiveMessage(&msg, processTable[i].pid, IPC_NOWAIT) >= 0) {
-        log_debug("Received message from child %d: %d", processTable[i].pid,
-                  msg.mtext);
-
-        if (msg.mtext == 0) {
-          log_debug("Child process %d is requesting to terminate.",
-                    processTable[i].pid);
-
-          processTable[i].occupied = 0;
-          waitpid(processTable[i].pid, NULL, 0);
-        }
-      }
-    }
-  }
-}
-
-ElapsedTime elapsedTimeSince(const struct timeval* lastTime) {
-  struct timeval now, diff;
-  gettimeofday(&now, NULL);
-  timersub(&now, lastTime, &diff);
-
-  ElapsedTime elapsedTime;
-  elapsedTime.seconds = diff.tv_sec;
-  elapsedTime.nanoseconds = diff.tv_usec * 1000;
-  return elapsedTime;
 }

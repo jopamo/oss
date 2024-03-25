@@ -1,11 +1,12 @@
 #include "arghandler.h"
-#include "cleanup.h"
 #include "shared.h"
 
 void operateWorkerCycle(const WorkerConfig *config);
-int shouldTerminate(const WorkerConfig *config, const SimulatedClock *simClock);
-void logStatus(const WorkerConfig *config, const SimulatedClock *simClock,
+int shouldTerminate(const SimulatedClock *simClock, const WorkerConfig *config);
+void logStatus(const SimulatedClock *simClock, const WorkerConfig *config,
                int iteration);
+
+volatile sig_atomic_t cleanupInitiated = 0;
 
 int main(int argc, char *argv[]) {
   gProcessType = PROCESS_TYPE_WORKER;
@@ -13,45 +14,56 @@ int main(int argc, char *argv[]) {
   workerArgs(argc, argv, &config);
 
   shmId = initSharedMemory();
-  simClock = attachSharedMemory(shmId);
+  simClock = attachSharedMemory();
   msqId = initMessageQueue();
+
+  logStatus(simClock, &config, -1);
 
   operateWorkerCycle(&config);
 
-  if (detachSharedMemory(simClock) != 0) {
-    log_debug("[Worker] Failed to detach from shared memory");
-  }
-
+  detachSharedMemory();
   return EXIT_SUCCESS;
 }
 
 void operateWorkerCycle(const WorkerConfig *config) {
   int iteration = 0;
+  pid_t myPid = getpid();
+  Message msg = {.mtype = myPid, .mtext = 1};
 
-  while (!shouldTerminate(config, simClock)) {
-    logStatus(config, simClock, iteration);
-    Message msg;
-    if (receiveMessage(&msg, getpid(), 0) == -1) {
-      perror("[Worker] Error receiving message");
+  while (!shouldTerminate(simClock, config)) {
+
+    if (msgrcv(msqId, &msg, sizeof(msg) - sizeof(long), myPid, 0) == -1) {
+
+      perror("[Worker] msgrcv failed");
       break;
     }
+
     iteration++;
-    if (shouldTerminate(config, simClock)) {
-      printf("[Worker] PID: %d - Terminating after %d iterations\n", getpid(),
-             iteration);
-      msg.mtype = 1;
-      msg.mtext = 0;
-      sendMessage(&msg);
-      break;
-    }
-    msg.mtype = 1;
+    logStatus(simClock, config, iteration);
+
+    msg.mtype = myPid;
     msg.mtext = 1;
-    sendMessage(&msg);
+    if (sendMessage(msqId, &msg) == -1) {
+      perror("[Worker] sendMessage failed");
+    }
   }
+
+  printf("[Worker] PID:%d - Terminating after %d iterations\n", myPid,
+         iteration);
 }
 
-int shouldTerminate(const WorkerConfig *config,
-                    const SimulatedClock *simClock) {
+void logStatus(const SimulatedClock *simClock, const WorkerConfig *config,
+               int iteration) {
+  pid_t myPid = getpid();
+
+  printf("[Worker] PID:%d PPID:%d SysClockS: %lu SysclockNano: %lu TermTimeS: "
+         "%u TermTimeNano: %u --Iteration:%d\n",
+         myPid, getppid(), simClock->seconds, simClock->nanoseconds,
+         config->lifespanSeconds, config->lifespanNanoSeconds, iteration);
+}
+
+int shouldTerminate(const SimulatedClock *simClock,
+                    const WorkerConfig *config) {
   unsigned long endSeconds = config->lifespanSeconds + simClock->seconds;
   unsigned long endNano = config->lifespanNanoSeconds + simClock->nanoseconds;
   if (endNano >= 1000000000) {
@@ -60,19 +72,4 @@ int shouldTerminate(const WorkerConfig *config,
   }
   return simClock->seconds > endSeconds ||
          (simClock->seconds == endSeconds && simClock->nanoseconds >= endNano);
-}
-
-void logStatus(const WorkerConfig *config, const SimulatedClock *simClock,
-               int iteration) {
-  unsigned long endSeconds = simClock->seconds + config->lifespanSeconds;
-  unsigned long endNano = simClock->nanoseconds + config->lifespanNanoSeconds;
-  if (endNano >= 1000000000) {
-    endNano -= 1000000000;
-    endSeconds++;
-  }
-  printf(
-      "[Worker] %d - simClockS: %lu simClockNano: %lu TermTimeS: %lu "
-      "TermTimeNano: %lu --%d iterations since starting\n",
-      getpid(), simClock->seconds, simClock->nanoseconds, endSeconds, endNano,
-      iteration);
 }

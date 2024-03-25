@@ -3,93 +3,124 @@
 
 volatile sig_atomic_t cleanupInitiated = 0;
 
+void atexitHandler(void) { cleanupResources(); }
+
 void cleanupResources(void) {
-  if (cleanupInitiated) return;
+  if (cleanupInitiated)
+    return;
   cleanupInitiated = 1;
-
-  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
-    if (processTable[i].occupied) {
-      kill(processTable[i].pid, SIGTERM);
-      waitpid(processTable[i].pid, NULL, 0);
-      processTable[i].occupied = 0;
-    }
-  }
-
-  if (simClock != NULL) {
-    if (shmdt(simClock) == -1) perror("shmdt failed");
-    if (shmId != -1 && shmctl(shmId, IPC_RMID, NULL) == -1)
-      perror("shmctl IPC_RMID failed");
-    shmId = -1;
-    simClock = NULL;
-  }
-
-  if (msqId != -1) {
-    if (msgctl(msqId, IPC_RMID, NULL) == -1) perror("msgctl IPC_RMID failed");
-    msqId = -1;
-  }
 
   if (logFile != NULL) {
     fclose(logFile);
     logFile = NULL;
   }
+
+  killAllWorkers();
+  sleep(2);
+
+  if (detachSharedMemory() == 0) {
+    log_debug("[OSS] Shared memory detached successfully.");
+  }
+
+  cleanupSharedMemory();
+
+  if (shmId != -1) {
+    if (shmctl(shmId, IPC_RMID, NULL) == -1) {
+      perror("Shared memory control IPC_RMID failed");
+    } else {
+      log_debug("[OSS] Shared memory segment marked for deletion.");
+    }
+  }
+
+  cleanupMessageQueue();
 }
 
-void signalHandler(int signum) {
-  if (!cleanupInitiated) {
-    cleanupInitiated = 1;
-    cleanupResources();
+void signalHandler(int sig) {
+  if (sig == SIGALRM || sig == SIGINT) {
+    keepRunning = 0;
+    if (sig == SIGALRM) {
+      printf("[OSS] Maximum runtime reached. Initiating cleanup...\n");
+    } else if (sig == SIGINT) {
+      printf("[OSS] Interrupt signal received. Initiating cleanup...\n");
+    }
+    killAllWorkers();
   }
-  printf("Signal %d received, exiting...\n", signum);
-  _Exit(EXIT_SUCCESS);
+}
+
+void killAllWorkers(void) {
+  Message msg = {.mtype = 1, .mtext = 0};
+  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
+    if (processTable[i].occupied) {
+      if (sendMessage(msqId, &msg) == -1) {
+        fprintf(stderr, "Failed to send termination message to process %d\n",
+                processTable[i].pid);
+      } else {
+        printf("[OSS] Termination message sent to PID %d\n",
+               processTable[i].pid);
+      }
+      processTable[i].occupied = 0;
+    }
+  }
+}
+
+int cleanupSharedMemory(void) {
+  if (shmId != -1) {
+    if (shmdt(simClock) != -1) {
+      perror("Shared memory detach failed");
+    }
+    simClock = NULL;
+
+    if (shmctl(shmId, IPC_RMID, NULL) == -1) {
+      perror("Shared memory control IPC_RMID failed");
+      return -1;
+    }
+    shmId = -1;
+  }
+  return 0;
+}
+
+int cleanupMessageQueue(void) {
+  if (msqId != -1) {
+    if (msgctl(msqId, IPC_RMID, NULL) == -1) {
+      perror("Message queue control IPC_RMID failed");
+      return -1;
+    }
+    msqId = -1;
+  }
+  return 0;
 }
 
 void setupSignalHandlers(void) {
   struct sigaction sa;
+
   memset(&sa, 0, sizeof(sa));
+
   sa.sa_handler = signalHandler;
-  sigemptyset(&sa.sa_mask);
+
   sa.sa_flags = 0;
 
   if (sigaction(SIGINT, &sa, NULL) == -1) {
-    perror("Cannot set SIGINT handler");
+    perror("[OSS] Error setting SIGINT handler");
+    exit(EXIT_FAILURE);
   }
-
-  if (sigaction(SIGTERM, &sa, NULL) == -1) {
-    perror("Cannot set SIGTERM handler");
-  }
-
   if (sigaction(SIGALRM, &sa, NULL) == -1) {
-    perror("Cannot set SIGALRM handler");
+    perror("[OSS] Error setting SIGALRM handler");
+    exit(EXIT_FAILURE);
+  }
+
+  sa.sa_handler = SIG_IGN;
+  if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+    log_error("Error setting up SIGCHLD handler");
+    exit(EXIT_FAILURE);
   }
 }
 
-void atexitHandler(void) { cleanupResources(); }
-
-int cleanupSharedMemory() {
-  if (shmId < 0) {
-    return -1;
+void cleanupAndExit(void) {
+  killAllWorkers();
+  cleanupResources();
+  if (logFile != NULL) {
+    fclose(logFile);
   }
 
-  if (simClock != NULL && detachSharedMemory(simClock) < 0) {
-    return -1;
-  }
-
-  if (shmctl(shmId, IPC_RMID, NULL) == -1) {
-    perror("shmctl");
-    return -1;
-  }
-
-  log_debug("Cleaned up shared memory successfully.");
-  shmId = -1;
-  simClock = NULL;
-  return 0;
-}
-
-int cleanupMessageQueue() {
-  if (msgctl(msqId, IPC_RMID, NULL) == -1) {
-    perror("msgctl");
-    return -1;
-  }
-  log_debug("Cleaned up message queue successfully.");
-  return 0;
+  printf("[OSS] Cleanup completed.\n");
 }
