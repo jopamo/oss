@@ -7,7 +7,7 @@ OBJ_DIR = obj
 BIN_DIR = bin
 
 OSS_SRC = arghandler.c shared.c oss.c cleanup.c
-WORKER_SRC = arghandler.c shared.c worker.c
+WORKER_SRC = arghandler.c shared.c worker.c cleanup.c
 TIMEKEEPER_SRC = arghandler.c shared.c timekeeper.c cleanup.c
 
 OSS_OBJ = $(OSS_SRC:%.c=$(OBJ_DIR)/%.o)

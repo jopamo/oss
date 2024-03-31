@@ -3,6 +3,32 @@
 
 volatile sig_atomic_t cleanupInitiated = 0;
 
+void setupSignalHandlers(void) {
+  struct sigaction sa = {0};
+
+  sa.sa_handler = signalHandler;
+  sigemptyset(&sa.sa_mask);
+
+  if (sigaction(SIGINT, &sa, NULL) == -1) {
+    log_message(LOG_LEVEL_ERROR, "Error setting SIGINT handler: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  if (sigaction(SIGALRM, &sa, NULL) == -1) {
+    log_message(LOG_LEVEL_ERROR, "Error setting SIGALRM handler: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  sa.sa_handler = SIG_IGN;
+  if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+    log_message(LOG_LEVEL_ERROR, "Error setting SIGCHLD to ignore: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+}
+
 void atexitHandler(void) {
 
   if (!cleanupInitiated) {
@@ -11,17 +37,21 @@ void atexitHandler(void) {
 }
 
 void cleanupResources(void) {
-
   if (cleanupInitiated)
     return;
   cleanupInitiated = 1;
   log_message(LOG_LEVEL_INFO, "Initiating cleanup process...");
 
   if (clockSem != NULL) {
-    sem_close(clockSem);
-
+    if (sem_close(clockSem) == -1) {
+      log_message(LOG_LEVEL_ERROR, "Failed to close semaphore: %s",
+                  strerror(errno));
+    }
     if (gProcessType == PROCESS_TYPE_OSS) {
-      sem_unlink(clockSemName);
+      if (sem_unlink(clockSemName) == -1) {
+        log_message(LOG_LEVEL_ERROR, "Failed to unlink semaphore: %s",
+                    strerror(errno));
+      }
     }
     clockSem = NULL;
   }
@@ -52,7 +82,7 @@ void cleanupResources(void) {
 void signalHandler(int sig) {
   char *signalType =
       sig == SIGALRM ? "Maximum runtime reached" : "Interrupt signal received";
-  log_message(LOG_LEVEL_INFO, "[OSS] %s. Initiating cleanup...", signalType);
+  log_message(LOG_LEVEL_INFO, "%s. Initiating cleanup...", signalType);
   cleanupAndExit();
 }
 
@@ -118,32 +148,6 @@ int cleanupMessageQueue(void) {
   return 0;
 }
 
-void setupSignalHandlers(void) {
-  struct sigaction sa = {0};
-
-  sa.sa_handler = signalHandler;
-  sigemptyset(&sa.sa_mask);
-
-  if (sigaction(SIGINT, &sa, NULL) == -1) {
-    log_message(LOG_LEVEL_ERROR, "[OSS] Error setting SIGINT handler: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
-  if (sigaction(SIGALRM, &sa, NULL) == -1) {
-    log_message(LOG_LEVEL_ERROR, "[OSS] Error setting SIGALRM handler: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
-  sa.sa_handler = SIG_IGN;
-  if (sigaction(SIGCHLD, &sa, NULL) == -1) {
-    log_message(LOG_LEVEL_ERROR, "Error setting SIGCHLD to ignore: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-}
-
 void timeoutHandler(int signum) {
   (void)signum;
   log_message(LOG_LEVEL_INFO, "Timeout signal received.");
@@ -161,6 +165,8 @@ void setupTimeout(int seconds) {
 }
 
 void cleanupAndExit(void) {
+  log_message(LOG_LEVEL_INFO, "Initiating cleanup.");
+
   killAllWorkers();
   cleanupResources();
 
@@ -169,6 +175,6 @@ void cleanupAndExit(void) {
     logFile = NULL;
   }
 
-  log_message(LOG_LEVEL_INFO, "[OSS] Cleanup completed. Exiting now.");
+  log_message(LOG_LEVEL_INFO, "Cleanup completed. Exiting now.");
   _exit(EXIT_SUCCESS);
 }

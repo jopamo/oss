@@ -27,11 +27,24 @@ int getCurrentChildren(void) { return currentChildren; }
 void setCurrentChildren(int value) { currentChildren = value; }
 
 void log_message(int level, const char *format, ...) {
-  if (level < currentLogLevel)
+  if (level < currentLogLevel) {
     return;
+  }
 
-  const char *processTypeStr =
-      (gProcessType == PROCESS_TYPE_OSS) ? "[OSS] " : "[Worker] ";
+  const char *processTypeStr;
+  switch (gProcessType) {
+  case PROCESS_TYPE_OSS:
+    processTypeStr = "[OSS] ";
+    break;
+  case PROCESS_TYPE_WORKER:
+    processTypeStr = "[Worker] ";
+    break;
+  case PROCESS_TYPE_TIMEKEEPER:
+    processTypeStr = "[Timekeeper] ";
+    break;
+  default:
+    processTypeStr = "[Unknown] ";
+  }
 
   va_list args;
   va_start(args, format);

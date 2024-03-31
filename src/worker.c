@@ -1,79 +1,123 @@
+#include "cleanup.h"
 #include "shared.h"
 
-void initializeWorker(const WorkerConfig *config);
-void workerMainLoop(const WorkerConfig *config);
-int checkForTermination(const SimulatedClock *clock,
-                        const WorkerConfig *config);
+void initializeWorkerResources(void);
+void calculateTerminationTime(unsigned long lifespanSeconds,
+                              unsigned long lifespanNanoSeconds,
+                              unsigned long *targetSeconds,
+                              unsigned long *targetNanoSeconds);
+void workerCleanup(void);
+
+void workerSigHandler(int sig) {
+  (void)sig;
+  keepRunning = 0;
+  log_message(LOG_LEVEL_INFO,
+              "[Worker] Received termination signal. Cleaning up...");
+}
 
 int main(int argc, char *argv[]) {
   if (argc != 3) {
-    fprintf(stderr,
-            "[Worker] Usage: %s <lifespan seconds> <lifespan nanoseconds>\n",
+    fprintf(stderr, "Usage: %s <lifespan seconds> <lifespan nanoseconds>\n",
             argv[0]);
     exit(EXIT_FAILURE);
   }
 
-  WorkerConfig config = {.lifespanSeconds = strtoul(argv[1], NULL, 10),
-                         .lifespanNanoSeconds = strtoul(argv[2], NULL, 10)};
+  setupSignalHandlers();
 
   gProcessType = PROCESS_TYPE_WORKER;
-  initializeWorker(&config);
-  workerMainLoop(&config);
+  initializeWorkerResources();
 
-  exit(EXIT_SUCCESS);
+  unsigned long lifespanSeconds = strtoul(argv[1], NULL, 10);
+  unsigned long lifespanNanoSeconds = strtoul(argv[2], NULL, 10);
+
+  unsigned long targetSeconds, targetNanoSeconds;
+  calculateTerminationTime(lifespanSeconds, lifespanNanoSeconds, &targetSeconds,
+                           &targetNanoSeconds);
+
+  unsigned long iterations = 0;
+  while (keepRunning) {
+    Message msg;
+
+    if (receiveMessage(msqId, &msg, getpid(), 0) == -1) {
+      perror("[Worker] Error receiving message");
+      continue;
+    }
+
+    sem_wait(clockSem);
+    unsigned long currentSeconds = simClock->seconds;
+    unsigned long currentNanoSeconds = simClock->nanoseconds;
+    sem_post(clockSem);
+
+    log_message(LOG_LEVEL_INFO,
+                "[Worker] PID:%d Iteration: %lu. Current Time: %lu.%lu, "
+                "Termination Time: %lu.%lu",
+                getpid(), ++iterations, currentSeconds, currentNanoSeconds,
+                targetSeconds, targetNanoSeconds);
+
+    if (currentSeconds > targetSeconds ||
+        (currentSeconds == targetSeconds &&
+         currentNanoSeconds >= targetNanoSeconds)) {
+      keepRunning = 0;
+    }
+
+    msg.mtext = keepRunning ? 1 : 0;
+    if (sendMessage(msqId, &msg) == -1) {
+      perror("[Worker] Error sending message");
+    }
+  }
+
+  log_message(LOG_LEVEL_INFO,
+              "[Worker] PID:%d Terminating. Total Iterations: %lu.", getpid(),
+              iterations);
+  workerCleanup();
+  return 0;
 }
 
-void initializeWorker(const WorkerConfig *config) {
+void initializeWorkerResources() {
 
   simClock = attachSharedMemory();
   if (simClock == NULL) {
-    log_message(LOG_LEVEL_ERROR,
-                "[Worker] Failed to attach to shared memory. Exiting.");
+    perror("Failed to attach to shared memory");
     exit(EXIT_FAILURE);
   }
 
-  log_message(LOG_LEVEL_INFO,
-              "[Worker] PID: %d, PPID: %d, Initialized with termination time: "
-              "%lu.%09lu seconds",
-              getpid(), getppid(), config->lifespanSeconds,
-              config->lifespanNanoSeconds);
-}
-
-void workerMainLoop(const WorkerConfig *config) {
-  int iterations = 0;
-
-  Message msg = {.mtype = 1, .mtext = 1};
-
-  do {
-
-    if (receiveMessage(msqId, &msg, 1, 0) == -1) {
-      log_message(LOG_LEVEL_ERROR,
-                  "[Worker] Failed to receive message. Exiting loop.");
-      break;
-    }
-
-    iterations++;
-    log_message(LOG_LEVEL_DEBUG,
-                "[Worker] PID: %d, Current Time: %lu.%09lu, Iteration: %d",
-                getpid(), simClock->seconds, simClock->nanoseconds, iterations);
-
-  } while (!checkForTermination(simClock, config));
-
-  log_message(LOG_LEVEL_INFO,
-              "[Worker] PID: %d - Terminating after %d iterations.", getpid(),
-              iterations);
-}
-
-int checkForTermination(const SimulatedClock *clock,
-                        const WorkerConfig *config) {
-  unsigned long termSecond = config->lifespanSeconds;
-  unsigned long termNano = config->lifespanNanoSeconds;
-
-  if (termNano >= NANOSECONDS_IN_SECOND) {
-    termSecond++;
-    termNano -= NANOSECONDS_IN_SECOND;
+  clockSem = sem_open(clockSemName, O_RDWR);
+  if (clockSem == SEM_FAILED) {
+    perror("Failed to open semaphore");
+    exit(EXIT_FAILURE);
   }
 
-  return (clock->seconds > termSecond) ||
-         (clock->seconds == termSecond && clock->nanoseconds >= termNano);
+  msqId = initMessageQueue();
+  if (msqId == -1) {
+    perror("Failed to initialize message queue");
+    exit(EXIT_FAILURE);
+  }
+}
+
+void calculateTerminationTime(unsigned long lifespanSeconds,
+                              unsigned long lifespanNanoSeconds,
+                              unsigned long *targetSeconds,
+                              unsigned long *targetNanoSeconds) {
+  sem_wait(clockSem);
+  *targetSeconds = simClock->seconds + lifespanSeconds;
+  *targetNanoSeconds = simClock->nanoseconds + lifespanNanoSeconds;
+
+  while (*targetNanoSeconds >= 1000000000) {
+    *targetSeconds += 1;
+    *targetNanoSeconds -= 1000000000;
+  }
+  sem_post(clockSem);
+}
+
+void workerCleanup() {
+
+  if (shmdt(simClock) == -1) {
+    perror("Failed to detach from shared memory");
+  }
+
+  if (sem_close(clockSem) == -1) {
+    perror("Failed to close semaphore");
+  }
+
+  exit(EXIT_SUCCESS);
 }

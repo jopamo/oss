@@ -3,16 +3,19 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ipc.h>
 #include <sys/msg.h>
 #include <sys/shm.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -66,7 +69,11 @@ typedef struct PCB {
   unsigned int startNano;
 } PCB;
 
-typedef enum { PROCESS_TYPE_OSS, PROCESS_TYPE_WORKER } ProcessType;
+typedef enum {
+  PROCESS_TYPE_OSS,
+  PROCESS_TYPE_WORKER,
+  PROCESS_TYPE_TIMEKEEPER
+} ProcessType;
 
 extern int logLevel;
 extern ProcessType gProcessType;

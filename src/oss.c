@@ -25,7 +25,11 @@ void logProcessTable(void);
 void updateProcessTableOnFork(int index, pid_t pid);
 void updateProcessTableOnTerminate(int index);
 
+void initializeSemaphore();
+
 int main(int argc, char *argv[]) {
+  initializeSemaphore();
+
   gProcessType = PROCESS_TYPE_OSS;
 
   ossArgs(argc, argv);
@@ -61,15 +65,16 @@ void initializeSimulationEnvironment(void) {
     exit(EXIT_FAILURE);
   }
 
+  clockSem = sem_open(clockSemName, O_CREAT, 0644, 1);
+  if (clockSem == SEM_FAILED) {
+    perror("sem_open failed");
+    exit(EXIT_FAILURE);
+  }
+
   pid_t pid = fork();
   if (pid == 0) {
 
     execl("./timekeeper", "timekeeper", (char *)NULL);
-    perror("Failed to execute the timekeeper");
-    exit(EXIT_FAILURE);
-  } else if (pid < 0) {
-    perror("Failed to fork the timekeeper process");
-    exit(EXIT_FAILURE);
   }
 
   logFile = fopen(logFileName, "w+");
@@ -288,14 +293,15 @@ void logProcessTable(void) {
           elapsed.tv_usec);
   fprintf(logFile, "Current Simulated Time: %lu.%09lu seconds\n",
           simClock->seconds, simClock->nanoseconds);
+
   fprintf(logFile, "Process Table:\n");
   fprintf(logFile, "Index | Occupied | PID | Start Time (s.ns)\n");
-
   for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
     if (processTable[i].occupied) {
       fprintf(logFile, "%5d | %8d | %3d | %10u.%09u\n", i,
               processTable[i].occupied, processTable[i].pid,
               processTable[i].startSeconds, processTable[i].startNano);
+
     } else {
       fprintf(logFile, "%5d | %8d | --- | -----------\n", i,
               processTable[i].occupied);
@@ -305,4 +311,25 @@ void logProcessTable(void) {
   sem_post(clockSem);
 
   fflush(logFile);
+}
+
+void initializeSemaphore() {
+  clockSem = sem_open(clockSemName, O_CREAT | O_EXCL, 0644, 1);
+  if (clockSem == SEM_FAILED) {
+    if (errno == EEXIST) {
+
+      clockSem = sem_open(clockSemName, 0);
+      if (clockSem == SEM_FAILED) {
+        log_message(LOG_LEVEL_ERROR, "Failed to open existing semaphore: %s",
+                    strerror(errno));
+        exit(EXIT_FAILURE);
+      }
+    } else {
+      log_message(LOG_LEVEL_ERROR, "Failed to create semaphore: %s",
+                  strerror(errno));
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  log_message(LOG_LEVEL_INFO, "Semaphore initialized successfully");
 }
