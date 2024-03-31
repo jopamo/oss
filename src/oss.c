@@ -20,8 +20,6 @@ int findFreeProcessTableEntry(void);
 void checkWorkerStatuses(void);
 int findProcessIndexByPID(pid_t pid);
 
-void incrementClockPerChild(void);
-
 void logProcessTable(void);
 
 void updateProcessTableOnFork(int index, pid_t pid);
@@ -60,6 +58,17 @@ void initializeSimulationEnvironment(void) {
 
   if (!simClock) {
     log_message(LOG_LEVEL_ERROR, "[OSS] Failed to attach shared memory.");
+    exit(EXIT_FAILURE);
+  }
+
+  pid_t pid = fork();
+  if (pid == 0) {
+
+    execl("./timekeeper", "timekeeper", (char *)NULL);
+    perror("Failed to execute the timekeeper");
+    exit(EXIT_FAILURE);
+  } else if (pid < 0) {
+    perror("Failed to fork the timekeeper process");
     exit(EXIT_FAILURE);
   }
 
@@ -120,7 +129,6 @@ void manageSimulation(void) {
     launchWorkerProcessesIfNeeded(&lastLaunchTime, &currentTime);
     communicateWithWorkersRoundRobin();
     checkWorkerStatuses();
-    incrementClockPerChild();
     logProcessTable();
 
     usleep(100000);
@@ -195,28 +203,6 @@ void checkWorkerStatuses(void) {
                   msg.mtype);
     }
   }
-}
-
-void incrementClockPerChild(void) {
-  int activeChildren = getCurrentChildren();
-
-  if (activeChildren == 0) {
-    log_message(LOG_LEVEL_DEBUG, "No active children to increment clock.");
-    return;
-  }
-
-  long incrementNano = (250000000L / activeChildren);
-
-  simClock->nanoseconds += incrementNano;
-
-  while (simClock->nanoseconds >= 1000000000) {
-    simClock->seconds++;
-    simClock->nanoseconds -= 1000000000;
-  }
-
-  log_message(LOG_LEVEL_DEBUG,
-              "Clock incremented: %lu seconds, %lu nanoseconds",
-              simClock->seconds, simClock->nanoseconds);
 }
 
 int findFreeProcessTableEntry(void) {
@@ -296,6 +282,8 @@ void logProcessTable(void) {
     }
   }
 
+  sem_wait(clockSem);
+
   fprintf(logFile, "\nCurrent Actual Time: %ld.%06ld seconds\n", elapsed.tv_sec,
           elapsed.tv_usec);
   fprintf(logFile, "Current Simulated Time: %lu.%09lu seconds\n",
@@ -313,6 +301,8 @@ void logProcessTable(void) {
               processTable[i].occupied);
     }
   }
+
+  sem_post(clockSem);
 
   fflush(logFile);
 }

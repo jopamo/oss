@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
+#include <semaphore.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -85,6 +86,9 @@ extern int maxSimultaneous;
 extern int childTimeLimit;
 extern int launchInterval;
 extern int currentChildren;
+
+extern sem_t *clockSem;
+extern const char *clockSemName;
 
 int getCurrentChildren(void);
 void setCurrentChildren(int value);

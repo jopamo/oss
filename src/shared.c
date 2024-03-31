@@ -20,6 +20,9 @@ int currentChildren = 0;
 
 int currentLogLevel = LOG_LEVEL_DEBUG;
 
+sem_t *clockSem = NULL;
+const char *clockSemName = "/simClockSem";
+
 int getCurrentChildren(void) { return currentChildren; }
 void setCurrentChildren(int value) { currentChildren = value; }
 
@@ -80,19 +83,27 @@ int initSharedMemory(size_t size) {
 }
 
 SimulatedClock *attachSharedMemory() {
-  if (shmId < 0) {
-    log_message(LOG_LEVEL_ERROR, "Invalid shmId: %d", shmId);
+  key_t key = getSharedMemoryKey();
+  if (key == -1) {
+    log_message(LOG_LEVEL_ERROR, "Invalid shared memory key.");
     return NULL;
   }
+
+  shmId = shmget(key, sizeof(SimulatedClock), 0644);
+  if (shmId < 0) {
+    log_message(LOG_LEVEL_ERROR, "Failed to find shared memory: %s",
+                strerror(errno));
+    return NULL;
+  }
+
   simClock = (SimulatedClock *)shmat(shmId, NULL, 0);
   if (simClock == (void *)-1) {
-    log_message(LOG_LEVEL_ERROR,
-                "Failed to attach to shared memory with shmId=%d. Error: %s",
-                shmId, strerror(errno));
+    log_message(LOG_LEVEL_ERROR, "Failed to attach to shared memory: %s",
+                strerror(errno));
     return NULL;
   }
-  log_message(LOG_LEVEL_INFO,
-              "Attached to shared memory successfully, shmId=%d", shmId);
+
+  log_message(LOG_LEVEL_INFO, "Attached to shared memory, shmId=%d", shmId);
   return simClock;
 }
 
@@ -120,6 +131,7 @@ int initMessageQueue(void) {
     log_message(LOG_LEVEL_ERROR, "msgget failed: %s", strerror(errno));
     return -1;
   }
+
   log_message(LOG_LEVEL_DEBUG, "Message queue initialized successfully");
   return msqId;
 }

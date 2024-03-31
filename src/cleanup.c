@@ -3,13 +3,28 @@
 
 volatile sig_atomic_t cleanupInitiated = 0;
 
-void atexitHandler(void) { cleanupResources(); }
+void atexitHandler(void) {
+
+  if (!cleanupInitiated) {
+    cleanupResources();
+  }
+}
 
 void cleanupResources(void) {
+
   if (cleanupInitiated)
     return;
   cleanupInitiated = 1;
   log_message(LOG_LEVEL_INFO, "Initiating cleanup process...");
+
+  if (clockSem != NULL) {
+    sem_close(clockSem);
+
+    if (gProcessType == PROCESS_TYPE_OSS) {
+      sem_unlink(clockSemName);
+    }
+    clockSem = NULL;
+  }
 
   if (logFile) {
     fclose(logFile);
@@ -17,17 +32,19 @@ void cleanupResources(void) {
     log_message(LOG_LEVEL_DEBUG, "Log file closed successfully.");
   }
 
-  killAllWorkers();
+  if (gProcessType == PROCESS_TYPE_OSS) {
+    killAllWorkers();
+  }
 
   if (detachSharedMemory() == 0) {
     log_message(LOG_LEVEL_DEBUG, "Shared memory detached successfully.");
   }
 
-  if (cleanupSharedMemory() == 0) {
+  if (gProcessType == PROCESS_TYPE_OSS && cleanupSharedMemory() == 0) {
     log_message(LOG_LEVEL_DEBUG, "Shared memory segment marked for deletion.");
   }
 
-  if (cleanupMessageQueue() == 0) {
+  if (gProcessType == PROCESS_TYPE_OSS && cleanupMessageQueue() == 0) {
     log_message(LOG_LEVEL_DEBUG, "Message queue removed successfully.");
   }
 }
