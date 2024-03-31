@@ -31,6 +31,18 @@
 #define DEFAULT_LAUNCH_INTERVAL 1000
 #define DEFAULT_LOG_FILE_NAME "oss.log"
 
+#define LOG_LEVEL_DEBUG 0
+#define LOG_LEVEL_INFO 1
+#define LOG_LEVEL_WARN 2
+#define LOG_LEVEL_ERROR 3
+
+#define NANOSECONDS_IN_SECOND 1000000000
+
+typedef struct {
+  unsigned int lifespanSeconds;
+  unsigned int lifespanNanoSeconds;
+} WorkerConfig;
+
 typedef struct {
   unsigned long seconds;
   unsigned long nanoseconds;
@@ -55,6 +67,7 @@ typedef struct PCB {
 
 typedef enum { PROCESS_TYPE_OSS, PROCESS_TYPE_WORKER } ProcessType;
 
+extern int logLevel;
 extern ProcessType gProcessType;
 
 extern struct timeval startTime;
@@ -73,25 +86,18 @@ extern int childTimeLimit;
 extern int launchInterval;
 extern int currentChildren;
 
-void log_debug(const char *format, ...);
-void log_error(const char *format, ...);
-
-int initSharedMemory(void);
-key_t getSharedMemoryKey(void);
-SimulatedClock *attachSharedMemory(void);
-int initMessageQueue(void);
 int getCurrentChildren(void);
-void sendMessageToNextChild(void);
+void setCurrentChildren(int value);
 
+void log_message(int level, const char *format, ...);
+
+key_t getSharedMemoryKey(void);
+int initSharedMemory(size_t size);
+SimulatedClock *attachSharedMemory();
 int detachSharedMemory(void);
 
+int initMessageQueue(void);
 int sendMessage(int msqId, Message *msg);
 int receiveMessage(int msqId, Message *msg, long msgType, int flags);
-
-void setCurrentChildren(int value);
-int receiveMessageFromChild(Message *msg, int childIndex);
-void updateProcessTableEntry(int childIndex);
-
-ElapsedTime elapsedTimeSince(const struct timeval *lastTime);
 
 #endif

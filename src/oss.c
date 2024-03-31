@@ -43,53 +43,66 @@ int main(int argc, char *argv[]) {
 }
 
 void initializeSimulationEnvironment(void) {
-  msqId = initMessageQueue();
-  shmId = initSharedMemory();
-  simClock = attachSharedMemory();
 
-  assert(msqId >= 0);
-  assert(simClock != NULL);
+  msqId = initMessageQueue();
+  if (msqId < 0) {
+    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to initialize message queue.");
+    exit(EXIT_FAILURE);
+  }
+
+  shmId = initSharedMemory(sizeof(SimulatedClock));
+  if (shmId < 0) {
+    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to initialize shared memory.");
+    exit(EXIT_FAILURE);
+  }
+
+  simClock = attachSharedMemory(sizeof(SimulatedClock));
+
+  if (!simClock) {
+    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to attach shared memory.");
+    exit(EXIT_FAILURE);
+  }
 
   logFile = fopen(logFileName, "w+");
   if (!logFile) {
-    perror("[OSS] Failed to open log file");
+    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to open log file %s",
+                logFileName);
     exit(EXIT_FAILURE);
   }
 }
 
 void launchWorkerProcesses(void) {
-  int activeChildren = 0;
   struct timespec launchDelay = {0, launchInterval * 1000000};
 
-  while (keepRunning && activeChildren < maxSimultaneous) {
-    if (findFreeProcessTableEntry() != -1) {
+  while (keepRunning && getCurrentChildren() < maxSimultaneous) {
+    int index = findFreeProcessTableEntry();
+    if (index != -1) {
       unsigned int lifespanSec = (rand() % childTimeLimit) + 1;
       unsigned int lifespanNSec = rand() % 1000000000;
 
-      int index = findFreeProcessTableEntry();
-      if (index != -1) {
-        pid_t pid = fork();
-        if (pid == 0) {
-          char secStr[32], nsecStr[32];
-          snprintf(secStr, sizeof(secStr), "%u", lifespanSec);
-          snprintf(nsecStr, sizeof(nsecStr), "%u", lifespanNSec);
-          execl("./worker", "worker", secStr, nsecStr, (char *)NULL);
-          perror("execl failed");
-          exit(EXIT_FAILURE);
-        } else if (pid > 0) {
-          updateProcessTableOnFork(index, pid);
-          activeChildren++;
-          printf("[OSS] Launched worker PID: %d, Lifespan: %u.%u seconds\n",
-                 pid, lifespanSec, lifespanNSec);
+      pid_t pid = fork();
+      if (pid == 0) {
+        char secStr[32], nsecStr[32];
+        snprintf(secStr, sizeof(secStr), "%u", lifespanSec);
+        snprintf(nsecStr, sizeof(nsecStr), "%u", lifespanNSec);
+        execl("./worker", "worker", secStr, nsecStr, (char *)NULL);
 
-          nanosleep(&launchDelay, NULL);
-        } else {
-          perror("fork failed");
-          break;
-        }
+        log_message(LOG_LEVEL_ERROR, "[Worker] execl failed: %s",
+                    strerror(errno));
+        _exit(EXIT_FAILURE);
+      } else if (pid > 0) {
+        updateProcessTableOnFork(index, pid);
+        log_message(LOG_LEVEL_INFO,
+                    "[OSS] Launched worker PID: %d, Lifespan: %u.%u seconds",
+                    pid, lifespanSec, lifespanNSec);
+        nanosleep(&launchDelay, NULL);
+      } else {
+        log_message(LOG_LEVEL_ERROR, "[OSS] Fork failed: %s", strerror(errno));
+        break;
       }
     } else {
-      printf("[OSS] Waiting for free process table entry...\n");
+      log_message(LOG_LEVEL_INFO,
+                  "[OSS] Waiting for a free process table entry...");
       sleep(1);
     }
   }
@@ -98,6 +111,7 @@ void launchWorkerProcesses(void) {
 void manageSimulation(void) {
   struct timespec lastLaunchTime;
   clock_gettime(CLOCK_MONOTONIC, &lastLaunchTime);
+  log_message(LOG_LEVEL_INFO, "Simulation management started.");
 
   while (keepRunning) {
     struct timespec currentTime;
@@ -111,6 +125,8 @@ void manageSimulation(void) {
 
     usleep(100000);
   }
+
+  log_message(LOG_LEVEL_INFO, "Simulation management ended.");
 }
 
 void launchWorkerProcessesIfNeeded(struct timespec *lastLaunchTime,
@@ -119,6 +135,7 @@ void launchWorkerProcessesIfNeeded(struct timespec *lastLaunchTime,
                   (currentTime->tv_nsec - lastLaunchTime->tv_nsec) / 1000000;
 
   if (timeDiff >= launchInterval) {
+    log_message(LOG_LEVEL_DEBUG, "Launching worker processes as needed.");
     launchWorkerProcesses();
     *lastLaunchTime = *currentTime;
   }
@@ -137,9 +154,12 @@ void communicateWithWorkersRoundRobin(void) {
       Message msg = {.mtype = pcb->pid, .mtext = 1};
 
       if (sendMessage(msqId, &msg) == -1) {
-        log_error("Failed to communicate with worker PID %d", pcb->pid);
+        log_message(LOG_LEVEL_ERROR, "Failed to communicate with worker PID %d",
+                    pcb->pid);
       } else {
-        log_debug("[OSS] Message sent to worker PID %d to proceed.", pcb->pid);
+        log_message(LOG_LEVEL_DEBUG,
+                    "[OSS] Message sent to worker PID %d to proceed.",
+                    pcb->pid);
       }
 
       lastIndex = (index + 1) % DEFAULT_MAX_PROCESSES;
@@ -148,7 +168,8 @@ void communicateWithWorkersRoundRobin(void) {
   }
 
   if (!foundActiveWorker) {
-    log_debug("[OSS] No active workers to communicate with at this cycle.");
+    log_message(LOG_LEVEL_DEBUG,
+                "[OSS] No active workers to communicate with at this cycle.");
   }
 }
 
@@ -158,17 +179,20 @@ void checkWorkerStatuses(void) {
   while (msgrcv(msqId, &msg, sizeof(msg) - sizeof(long), 0, IPC_NOWAIT) != -1) {
     int index = findProcessIndexByPID(msg.mtype);
 
-    printf("[OSS] Received message from Worker PID: %ld\n", msg.mtype);
-
     if (index != -1) {
-
       if (msg.mtext == 0) {
         updateProcessTableOnTerminate(index);
-        printf("[OSS] Worker PID %ld has terminated\n", msg.mtype);
+        log_message(LOG_LEVEL_INFO, "[OSS] Worker PID %ld has terminated",
+                    msg.mtype);
       } else {
+        log_message(LOG_LEVEL_DEBUG,
+                    "[OSS] Received alive message from worker PID %ld",
+                    msg.mtype);
       }
     } else {
-      printf("[OSS ERROR] Received message from unknown PID %ld\n", msg.mtype);
+      log_message(LOG_LEVEL_ERROR,
+                  "[OSS ERROR] Received message from unknown PID %ld",
+                  msg.mtype);
     }
   }
 }
@@ -176,8 +200,10 @@ void checkWorkerStatuses(void) {
 void incrementClockPerChild(void) {
   int activeChildren = getCurrentChildren();
 
-  if (activeChildren == 0)
+  if (activeChildren == 0) {
+    log_message(LOG_LEVEL_DEBUG, "No active children to increment clock.");
     return;
+  }
 
   long incrementNano = (250000000L / activeChildren);
 
@@ -187,24 +213,35 @@ void incrementClockPerChild(void) {
     simClock->seconds++;
     simClock->nanoseconds -= 1000000000;
   }
+
+  log_message(LOG_LEVEL_DEBUG,
+              "Clock incremented: %lu seconds, %lu nanoseconds",
+              simClock->seconds, simClock->nanoseconds);
 }
 
 int findFreeProcessTableEntry(void) {
   for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
     if (!processTable[i].occupied) {
+      log_message(LOG_LEVEL_DEBUG, "Found free process table entry at index %d",
+                  i);
       return i;
     }
   }
+  log_message(LOG_LEVEL_WARN, "No free process table entries found.");
   return -1;
 }
 
 int findProcessIndexByPID(pid_t pid) {
   for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
     if (processTable[i].occupied && processTable[i].pid == pid) {
+      log_message(LOG_LEVEL_DEBUG,
+                  "Found process table entry for PID %ld at index %d",
+                  (long)pid, i);
       return i;
     }
   }
-  log_debug("No process table entry found for PID %ld", (long)pid);
+  log_message(LOG_LEVEL_WARN, "No process table entry found for PID %ld",
+              (long)pid);
   return -1;
 }
 
@@ -216,9 +253,13 @@ void updateProcessTableOnFork(int index, pid_t pid) {
     pcb->startSeconds = simClock->seconds;
     pcb->startNano = simClock->nanoseconds;
 
-    log_debug("Process table updated at index %d with PID %d", index, pid);
+    log_message(
+        LOG_LEVEL_DEBUG,
+        "Process table updated at index %d with PID %d, start time %lu.%09lu",
+        index, pid, pcb->startSeconds, pcb->startNano);
   } else {
-    log_error("Invalid index %d for process table update", index);
+    log_message(LOG_LEVEL_ERROR, "Invalid index %d for process table update",
+                index);
   }
 }
 
@@ -231,9 +272,12 @@ void updateProcessTableOnTerminate(pid_t pid) {
     pcb->startSeconds = 0;
     pcb->startNano = 0;
 
-    log_debug("Process table entry at index %d cleared for PID %d", index, pid);
+    log_message(LOG_LEVEL_DEBUG,
+                "Process table entry at index %d cleared for PID %d", index,
+                pid);
   } else {
-    log_error("No process table entry found for PID %d", pid);
+    log_message(LOG_LEVEL_ERROR, "No process table entry found for PID %d",
+                pid);
   }
 }
 

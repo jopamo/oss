@@ -17,174 +17,139 @@ int childTimeLimit = DEFAULT_CHILD_TIME_LIMIT;
 int launchInterval = DEFAULT_LAUNCH_INTERVAL;
 
 int currentChildren = 0;
-int lastChildSent = 0;
+
+int currentLogLevel = LOG_LEVEL_DEBUG;
 
 int getCurrentChildren(void) { return currentChildren; }
 void setCurrentChildren(int value) { currentChildren = value; }
 
-void log_debug(const char *format, ...) {
-  struct timeval now;
-  gettimeofday(&now, NULL);
+void log_message(int level, const char *format, ...) {
+  if (level < currentLogLevel)
+    return;
 
-  char timeBuffer[64];
-  strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S",
-           localtime(&now.tv_sec));
-
-  fprintf(stderr, "[%s] [DEBUG] [%s] ", timeBuffer,
-          (gProcessType == PROCESS_TYPE_OSS) ? "OSS" : "Worker");
+  const char *processTypeStr =
+      (gProcessType == PROCESS_TYPE_OSS) ? "[OSS] " : "[Worker] ";
 
   va_list args;
   va_start(args, format);
-  vfprintf(stderr, format, args);
+  int needed = vsnprintf(NULL, 0, format, args) + strlen(processTypeStr) + 1;
   va_end(args);
-  fprintf(stderr, "\n");
 
-  if (logFile != NULL) {
-    fprintf(logFile, "[%s] [DEBUG] [%s] ", timeBuffer,
-            (gProcessType == PROCESS_TYPE_OSS) ? "OSS" : "Worker");
+  char *buffer = (char *)malloc(needed);
+  if (buffer) {
+    strcpy(buffer, processTypeStr);
+
     va_start(args, format);
-    vfprintf(logFile, format, args);
+    vsnprintf(buffer + strlen(processTypeStr), needed - strlen(processTypeStr),
+              format, args);
     va_end(args);
-    fprintf(logFile, "\n");
+
+    fprintf(stderr, "%s\n", buffer);
+    if (logFile) {
+      fprintf(logFile, "%s\n", buffer);
+      fflush(logFile);
+    }
+
+    free(buffer);
   }
 }
 
-void log_error(const char *format, ...) {
-  struct timeval now;
-  gettimeofday(&now, NULL);
-
-  char timeBuffer[64];
-  strftime(timeBuffer, sizeof(timeBuffer), "%Y-%m-%d %H:%M:%S",
-           localtime(&now.tv_sec));
-
-  fprintf(stderr, "[%s] [ERROR] [%s] ", timeBuffer,
-          (gProcessType == PROCESS_TYPE_OSS) ? "OSS" : "Worker");
-
-  va_list args;
-  va_start(args, format);
-  vfprintf(stderr, format, args);
-  va_end(args);
-  fprintf(stderr, "\n");
-
-  if (logFile != NULL) {
-    fprintf(logFile, "[%s] [ERROR] [%s] ", timeBuffer,
-            (gProcessType == PROCESS_TYPE_OSS) ? "OSS" : "Worker");
-    va_start(args, format);
-    vfprintf(logFile, format, args);
-    va_end(args);
-    fprintf(logFile, "\n");
+key_t getSharedMemoryKey(void) {
+  key_t key = ftok(SHM_PATH, SHM_PROJ_ID);
+  if (key == -1) {
+    perror("ftok");
   }
+  return key;
 }
 
-int initSharedMemory(void) {
-  key_t key = getSharedMemoryKey();
-  shmId = shmget(key, sizeof(SimulatedClock), 0644 | IPC_CREAT);
-
-  if (shmId < 0) {
-    perror("shmget");
+int initSharedMemory(size_t size) {
+  key_t key = ftok(SHM_PATH, SHM_PROJ_ID);
+  if (key == -1) {
+    log_message(LOG_LEVEL_ERROR, "ftok failed: %s", strerror(errno));
     return -1;
   }
-  log_debug("Shared memory initialized successfully, shmId=%d", shmId);
 
+  shmId = shmget(key, size, 0644 | IPC_CREAT);
+  if (shmId < 0) {
+    log_message(LOG_LEVEL_ERROR, "shmget failed: %s", strerror(errno));
+    return -1;
+  }
+
+  log_message(LOG_LEVEL_DEBUG, "Shared memory initialized, shmId=%d", shmId);
   return shmId;
 }
 
-key_t getSharedMemoryKey(void) { return ftok(SHM_PATH, SHM_PROJ_ID); }
-
-SimulatedClock *attachSharedMemory(void) {
+SimulatedClock *attachSharedMemory() {
   if (shmId < 0) {
-    log_debug("Attempt to attach to shared memory failed: Invalid shmId=%d",
-              shmId);
+    log_message(LOG_LEVEL_ERROR, "Invalid shmId: %d", shmId);
     return NULL;
   }
-
-  SimulatedClock *simClock = (SimulatedClock *)shmat(shmId, NULL, 0);
-  if (simClock == (SimulatedClock *)-1) {
-    perror("shmat");
-
-    if (gProcessType == PROCESS_TYPE_OSS) {
-      log_debug("[OSS] Failed to attach to shared memory with shmId=%d", shmId);
-    } else if (gProcessType == PROCESS_TYPE_WORKER) {
-      log_debug("[Worker] Failed to attach to shared memory with shmId=%d",
-                shmId);
-    } else {
-      log_debug("Unknown process type failed to attach to shared memory with "
-                "shmId=%d",
-                shmId);
-    }
+  simClock = (SimulatedClock *)shmat(shmId, NULL, 0);
+  if (simClock == (void *)-1) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to attach to shared memory with shmId=%d. Error: %s",
+                shmId, strerror(errno));
     return NULL;
   }
-  log_debug("Attached shared memory successfully, shmId=%d", shmId);
+  log_message(LOG_LEVEL_INFO,
+              "Attached to shared memory successfully, shmId=%d", shmId);
   return simClock;
 }
 
 int detachSharedMemory(void) {
-  if (simClock != NULL) {
-    if (shmdt(simClock) == -1) {
-      perror("shmdt");
-      log_error("Failed to detach shared memory.");
-      return -1;
-    }
-    simClock = NULL;
-    log_debug("Successfully detached shared memory.");
-  } else {
-    log_debug("Shared memory was not attached or already detached.");
+  if (simClock != NULL && shmdt(simClock) == -1) {
+    log_message(LOG_LEVEL_ERROR, "Failed to detach shared memory: %s",
+                strerror(errno));
+    return -1;
   }
+  simClock = NULL;
+  log_message(LOG_LEVEL_DEBUG, "Successfully detached shared memory.");
   return 0;
 }
 
 int initMessageQueue(void) {
   key_t msg_key = ftok(MSG_PATH, MSG_PROJ_ID);
-
   if (msg_key == -1) {
-    perror("ftok for msg_key failed");
-    exit(EXIT_FAILURE);
+    log_message(LOG_LEVEL_ERROR, "ftok for msg_key failed: %s",
+                strerror(errno));
+    return -1;
   }
 
   msqId = msgget(msg_key, IPC_CREAT | 0666);
-
   if (msqId < 0) {
-    perror("msgget");
+    log_message(LOG_LEVEL_ERROR, "msgget failed: %s", strerror(errno));
     return -1;
   }
-  log_debug("Message queue initialized successfully");
+  log_message(LOG_LEVEL_DEBUG, "Message queue initialized successfully");
   return msqId;
 }
 
 int sendMessage(int msqId, Message *msg) {
-
-  log_debug("[SEND] Preparing to send. mtype: %ld, mtext: %d", msg->mtype,
-            msg->mtext);
-
   if (msgsnd(msqId, msg, sizeof(*msg) - sizeof(long), 0) == -1) {
-    log_error("[SEND] Failed to send message. mtype: %ld, Error: %s",
-              msg->mtype, strerror(errno));
+    log_message(LOG_LEVEL_ERROR,
+                "[SEND] Failed to send message. mtype: %ld, Error: %s",
+                msg->mtype, strerror(errno));
     return -1;
   }
-
-  log_debug("[SEND] Message sent successfully. mtype: %ld", msg->mtype);
+  log_message(LOG_LEVEL_DEBUG, "[SEND] Message sent successfully. mtype: %ld",
+              msg->mtype);
   return 0;
 }
 
 int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
-
-  log_debug("[RECEIVE] Waiting for message. Expected mtype: %ld", msgType);
-
   ssize_t result =
       msgrcv(msqId, msg, sizeof(*msg) - sizeof(long), msgType, flags);
   if (result == -1) {
-
-    if (errno == ENOMSG) {
-      log_debug("[RECEIVE] No message available for mtype: %ld", msgType);
-    } else {
-      log_error(
+    if (errno != ENOMSG) {
+      log_message(
+          LOG_LEVEL_ERROR,
           "[RECEIVE] Failed to receive message. Expected mtype: %ld, Error: %s",
           msgType, strerror(errno));
     }
     return -1;
   }
-
-  log_debug("[RECEIVE] Message received successfully. mtype: %ld, mtext: %d",
-            msg->mtype, msg->mtext);
+  log_message(LOG_LEVEL_DEBUG,
+              "[RECEIVE] Message received successfully. mtype: %ld, mtext: %d",
+              msg->mtype, msg->mtext);
   return 0;
 }
