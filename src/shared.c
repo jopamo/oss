@@ -1,5 +1,7 @@
 #include "shared.h"
 
+#include <pthread.h>
+
 ProcessType gProcessType;
 struct timeval startTime;
 struct timeval lastLogTime;
@@ -23,6 +25,8 @@ int currentLogLevel = LOG_LEVEL_DEBUG;
 sem_t *clockSem = NULL;
 const char *clockSemName = "/simClockSem";
 
+pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER;
+
 int getCurrentChildren(void) { return currentChildren; }
 void setCurrentChildren(int value) { currentChildren = value; }
 
@@ -31,42 +35,32 @@ void log_message(int level, const char *format, ...) {
     return;
   }
 
-  const char *processTypeStr;
-  switch (gProcessType) {
-  case PROCESS_TYPE_OSS:
-    processTypeStr = "[OSS] ";
-    break;
-  case PROCESS_TYPE_WORKER:
-    processTypeStr = "[Worker] ";
-    break;
-  case PROCESS_TYPE_TIMEKEEPER:
-    processTypeStr = "[Timekeeper] ";
-    break;
-  default:
-    processTypeStr = "[Unknown] ";
+  if (pthread_mutex_lock(&logMutex) != 0) {
+
+    fprintf(stderr, "log_message: error locking mutex\n");
+    return;
   }
+
+  char buffer[LOG_BUFFER_SIZE];
+  int offset = snprintf(buffer, sizeof(buffer), "[%s] ",
+                        processTypeToString(gProcessType));
 
   va_list args;
   va_start(args, format);
-  int needed = vsnprintf(NULL, 0, format, args) + strlen(processTypeStr) + 1;
+  vsnprintf(buffer + offset, sizeof(buffer) - offset, format, args);
   va_end(args);
 
-  char *buffer = (char *)malloc(needed);
-  if (buffer) {
-    strcpy(buffer, processTypeStr);
+  buffer[sizeof(buffer) - 1] = '\0';
 
-    va_start(args, format);
-    vsnprintf(buffer + strlen(processTypeStr), needed - strlen(processTypeStr),
-              format, args);
-    va_end(args);
+  fprintf(stderr, "%s\n", buffer);
+  if (logFile) {
+    fprintf(logFile, "%s\n", buffer);
+    fflush(logFile);
+  }
 
-    fprintf(stderr, "%s\n", buffer);
-    if (logFile) {
-      fprintf(logFile, "%s\n", buffer);
-      fflush(logFile);
-    }
+  if (pthread_mutex_unlock(&logMutex) != 0) {
 
-    free(buffer);
+    fprintf(stderr, "log_message: error unlocking mutex\n");
   }
 }
 

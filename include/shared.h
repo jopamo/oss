@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -40,7 +41,13 @@
 #define LOG_LEVEL_WARN 2
 #define LOG_LEVEL_ERROR 3
 
+#define SUCCESS 0
+#define ERROR_INIT_QUEUE -1
+#define ERROR_INIT_SHM -2
+
 #define NANOSECONDS_IN_SECOND 1000000000
+
+#define LOG_BUFFER_SIZE 1024
 
 typedef struct {
   unsigned int lifespanSeconds;
