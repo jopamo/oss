@@ -23,7 +23,7 @@ int findProcessIndexByPID(pid_t pid);
 void logProcessTable(void);
 
 void updateProcessTableOnFork(int index, pid_t pid);
-void updateProcessTableOnTerminate(int index);
+void updateProcessTableOnTerminate(pid_t pid);
 
 void initializeSemaphore();
 
@@ -194,7 +194,7 @@ void checkWorkerStatuses(void) {
 
     if (index != -1) {
       if (msg.mtext == 0) {
-        updateProcessTableOnTerminate(index);
+        updateProcessTableOnTerminate(msg.mtype);
         log_message(LOG_LEVEL_INFO, "[OSS] Worker PID %ld has terminated",
                     msg.mtype);
       } else {
@@ -203,8 +203,7 @@ void checkWorkerStatuses(void) {
                     msg.mtype);
       }
     } else {
-      log_message(LOG_LEVEL_ERROR,
-                  "[OSS ERROR] Received message from unknown PID %ld",
+      log_message(LOG_LEVEL_WARN, "[OSS] Received message from unknown PID %ld",
                   msg.mtype);
     }
   }
@@ -263,11 +262,12 @@ void updateProcessTableOnTerminate(pid_t pid) {
     pcb->startSeconds = 0;
     pcb->startNano = 0;
 
-    log_message(LOG_LEVEL_DEBUG,
-                "Process table entry at index %d cleared for PID %d", index,
-                pid);
+    log_message(LOG_LEVEL_INFO,
+                "[OSS] Process table entry at index %d cleared for PID %d",
+                index, pid);
   } else {
-    log_message(LOG_LEVEL_ERROR, "No process table entry found for PID %d",
+    log_message(LOG_LEVEL_WARN,
+                "[OSS] No process table entry found for PID %d to terminate",
                 pid);
   }
 }
@@ -293,18 +293,21 @@ void logProcessTable(void) {
           elapsed.tv_usec);
   fprintf(logFile, "Current Simulated Time: %lu.%09lu seconds\n",
           simClock->seconds, simClock->nanoseconds);
-
   fprintf(logFile, "Process Table:\n");
-  fprintf(logFile, "Index | Occupied | PID | Start Time (s.ns)\n");
-  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
-    if (processTable[i].occupied) {
-      fprintf(logFile, "%5d | %8d | %3d | %10u.%09u\n", i,
-              processTable[i].occupied, processTable[i].pid,
-              processTable[i].startSeconds, processTable[i].startNano);
+  fprintf(logFile,
+          "Index | Occupied | PID  | Start Time (s.ns)    | End Time (s.ns)\n");
+  fprintf(
+      logFile,
+      "------+----------+------+----------------------+------------------\n");
 
+  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
+    PCB *pcb = &processTable[i];
+    if (pcb->occupied) {
+      fprintf(logFile, "%5d | %8d | %4d | %10u.%09u     | TBD\n", i,
+              pcb->occupied, pcb->pid, pcb->startSeconds, pcb->startNano);
     } else {
-      fprintf(logFile, "%5d | %8d | --- | -----------\n", i,
-              processTable[i].occupied);
+      fprintf(logFile, "%5d | %8d |  --- |         ---          | ---\n", i,
+              pcb->occupied);
     }
   }
 

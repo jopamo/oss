@@ -5,7 +5,6 @@ volatile sig_atomic_t cleanupInitiated = 0;
 
 void setupSignalHandlers(void) {
   struct sigaction sa = {0};
-
   sa.sa_handler = signalHandler;
   sigemptyset(&sa.sa_mask);
 
@@ -20,6 +19,8 @@ void setupSignalHandlers(void) {
                 strerror(errno));
     exit(EXIT_FAILURE);
   }
+
+  alarm(60);
 
   sa.sa_handler = SIG_IGN;
   if (sigaction(SIGCHLD, &sa, NULL) == -1) {
@@ -80,9 +81,19 @@ void cleanupResources(void) {
 }
 
 void signalHandler(int sig) {
-  char *signalType =
-      sig == SIGALRM ? "Maximum runtime reached" : "Interrupt signal received";
-  log_message(LOG_LEVEL_INFO, "%s. Initiating cleanup...", signalType);
+  switch (sig) {
+  case SIGINT:
+    log_message(LOG_LEVEL_INFO,
+                "Interrupt signal received. Initiating cleanup...");
+    break;
+  case SIGALRM:
+    log_message(LOG_LEVEL_INFO,
+                "Maximum runtime reached (60 seconds). Initiating cleanup...");
+    break;
+  default:
+    log_message(LOG_LEVEL_WARN, "Unhandled signal received: %d", sig);
+    return;
+  }
   cleanupAndExit();
 }
 
