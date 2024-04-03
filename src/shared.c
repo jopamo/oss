@@ -30,6 +30,19 @@ pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER;
 int getCurrentChildren(void) { return currentChildren; }
 void setCurrentChildren(int value) { currentChildren = value; }
 
+const char *processTypeToString(ProcessType type) {
+  switch (type) {
+  case PROCESS_TYPE_OSS:
+    return "OSS";
+  case PROCESS_TYPE_WORKER:
+    return "Worker";
+  case PROCESS_TYPE_TIMEKEEPER:
+    return "Timekeeper";
+  default:
+    return "Unknown";
+  }
+}
+
 void log_message(int level, const char *format, ...) {
   if (level < currentLogLevel) {
     return;
