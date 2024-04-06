@@ -32,16 +32,6 @@ To launch a simulation with 10 total processes, where no more than 5 processes a
 ./oss -n 10 -s 5 -t 7 -i 100 -f oss_log.txt
 ```
 
-### Worker Executable Instructions
-
-The `worker` executable is launched by `oss` with two command-line arguments specifying its lifespan in seconds and nanoseconds. For example, `oss` might launch a `worker` like so (for internal operation demonstration only):
-
-```bash
-./worker 5 500000
-```
-
-**Note:** The `worker` executable is not intended to be executed directly by the user.
-
 ### Cleaning Up
 
 To clean up and remove all compiled files, run:
