@@ -1,14 +1,24 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -pedantic -g
+CLANG_PATH = $(shell command -v clang)
+CC = $(if $(CLANG_PATH),clang,gcc)
+
+CFLAGS = -Wall -Wextra -pedantic -g3 -O0 -Werror
 INCLUDES = -Iinclude
+
+ifeq ($(CC), clang)
+    FUZZ_FLAGS = -fsanitize=address
+    CFLAGS += $(FUZZ_FLAGS)
+    CFLAGS += -DDEBUG
+else
+endif
+
 
 SRC_DIR = src
 OBJ_DIR = obj
 BIN_DIR = bin
 
-OSS_SRC = arghandler.c shared.c oss.c cleanup.c
-WORKER_SRC = arghandler.c shared.c worker.c cleanup.c
-TIMEKEEPER_SRC = arghandler.c shared.c timekeeper.c cleanup.c
+OSS_SRC = arghandler.c shared.c oss.c cleanup.c process.c
+WORKER_SRC = arghandler.c shared.c worker.c process.c
+TIMEKEEPER_SRC = arghandler.c shared.c timekeeper.c process.c
 
 OSS_OBJ = $(OSS_SRC:%.c=$(OBJ_DIR)/%.o)
 WORKER_OBJ = $(WORKER_SRC:%.c=$(OBJ_DIR)/%.o)
