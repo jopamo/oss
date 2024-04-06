@@ -23,4 +23,6 @@ int messageQueue_cleanup(void);
 int cleanupSharedMemorySegment(void **segment, int shmId);
 void setupTimeout(int seconds);
 
+void initializeSemaphore(const char *semName);
+
 #endif

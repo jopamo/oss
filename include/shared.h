@@ -130,7 +130,6 @@ int initMessageQueue(void);
 int sendMessage(int msqId, Message *msg);
 int receiveMessage(int msqId, Message *msg, long msgType, int flags);
 
-void initializeSemaphore(const char *semName);
 void cleanupSharedResources(void);
 
 void initializeSharedMemorySegments(void);

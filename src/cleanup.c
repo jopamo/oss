@@ -12,15 +12,15 @@ void cleanupResources(void) {
     return;
   }
 
+  cleanupInitiated = 1;
+
   semaphore_cleanup();
-
   logFile_cleanup();
-
   killAllWorkers();
-
   sharedMemory_cleanup();
-
   messageQueue_cleanup();
+
+  cleanupInitiated = 0;
 }
 
 void semaphore_cleanup(void) {
@@ -72,26 +72,23 @@ int messageQueue_cleanup(void) {
 }
 
 void killAllWorkers(void) {
-  log_message(LOG_LEVEL_INFO,
-              "Sending termination signals to all worker processes.");
+  log_message(LOG_LEVEL_INFO, "Sending termination signals to all worker processes.");
   Message msg = {.mtype = 1, .mtext = 0};
   for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
     if (processTable[i].occupied) {
-
       msg.mtype = processTable[i].pid;
-
-      if (sendMessage(msqId, &msg) == -1) {
-        log_message(LOG_LEVEL_ERROR,
-                    "Failed to send termination message to PID: %d.",
-                    processTable[i].pid);
+      if (sendMessage(msqId, &msg) != -1) {
+        int status;
+        waitpid(processTable[i].pid, &status, 0); // Ensure the worker has terminated
+        log_message(LOG_LEVEL_DEBUG, "Termination message sent and worker PID: %d exited.", processTable[i].pid);
       } else {
-        log_message(LOG_LEVEL_DEBUG, "Termination message sent to PID: %d.",
-                    processTable[i].pid);
+        log_message(LOG_LEVEL_ERROR, "Failed to send termination message to PID: %d.", processTable[i].pid);
       }
       processTable[i].occupied = 0;
     }
   }
 }
+
 
 int cleanupSharedMemory(void) {
   if (shmId != -1) {
@@ -153,4 +150,13 @@ void cleanupAndExit(void) {
   cleanupResources();
   log_message(LOG_LEVEL_INFO, "Cleanup completed, exiting...");
   _exit(EXIT_SUCCESS);
+}
+
+void initializeSemaphore(const char *semName) {
+  sem_unlink(semName);
+  clockSem = sem_open(semName, O_CREAT | O_EXCL, SEM_PERMISSIONS, 1);
+  if (clockSem == SEM_FAILED) {
+    perror("Failed to initialize semaphore");
+    exit(EXIT_FAILURE);
+  }
 }

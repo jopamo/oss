@@ -243,15 +243,6 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
   return -1;
 }
 
-void initializeSemaphore(const char *semName) {
-  sem_unlink(semName);
-  clockSem = sem_open(semName, O_CREAT | O_EXCL, SEM_PERMISSIONS, 1);
-  if (clockSem == SEM_FAILED) {
-    perror("Failed to initialize semaphore");
-    exit(EXIT_FAILURE);
-  }
-}
-
 void cleanupSharedResources(void) {
   if (clockSem != SEM_FAILED) {
     sem_wait(clockSem);
