@@ -1,139 +1,106 @@
+#include <sys/time.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "arghandler.h"
 #include "cleanup.h"
+#include "process.h"
 #include "shared.h"
 
-#define INT_MAX_STR_SIZE (sizeof(char) * ((CHAR_BIT * sizeof(int) - 1) / 3 + 2))
-
-#include <sys/types.h>
+pid_t timekeeperPid = -1;
 
 void initializeSimulationEnvironment(void);
 void launchWorkerProcesses(void);
-void launchWorkerProcessesIfNeeded(struct timespec *lastLaunchTime,
-                                   struct timespec *currentTime);
 void manageSimulation(void);
 void communicateWithWorkersRoundRobin(void);
-void signalHandler(int sig);
-
 int findFreeProcessTableEntry(void);
 void checkWorkerStatuses(void);
 int findProcessIndexByPID(pid_t pid);
-
 void logProcessTable(void);
-
 void updateProcessTableOnFork(int index, pid_t pid);
 void updateProcessTableOnTerminate(pid_t pid);
 
-void initializeSemaphore();
+void signalHandler(int sig) {
+  if (sig == SIGINT || sig == SIGTERM) {
+    keepRunning = 0;
+    if (timekeeperPid > 0) {
+      kill(timekeeperPid, SIGTERM);
+    }
+  }
+}
+
+void setupSignalHandling(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = signalHandler;
+  sigaction(SIGINT, &sa, NULL);
+  sigaction(SIGTERM, &sa, NULL);
+}
+
+void initializeSimulationEnvironment(void) {
+  initializeSharedMemorySegments();
+
+  timekeeperPid = fork();
+  if (timekeeperPid == 0) {
+    execl("./timekeeper", "timekeeper", (char *)NULL);
+    log_message(LOG_LEVEL_ERROR, "Failed to start timekeeper: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  } else if (timekeeperPid < 0) {
+    log_message(LOG_LEVEL_ERROR, "Fork failed: %s", strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  msqId = initMessageQueue();
+  if (msqId < 0) {
+    log_message(LOG_LEVEL_ERROR, "Failed to initialize message queue.");
+    exit(EXIT_FAILURE);
+  }
+
+  logFile = fopen(logFileName, "w+");
+  if (!logFile) {
+    log_message(LOG_LEVEL_ERROR, "Failed to open log file %s", logFileName);
+    exit(EXIT_FAILURE);
+  }
+}
 
 int main(int argc, char *argv[]) {
-  initializeSemaphore();
-
-  gProcessType = PROCESS_TYPE_OSS;
+  setupSignalHandlers();
+  initializeSemaphore(clockSemName);
 
   ossArgs(argc, argv);
 
-  setupSignalHandlers();
   atexit(atexitHandler);
-  initializeSimulationEnvironment();
+  setupTimeout(60);
 
+  initializeSimulationEnvironment();
   manageSimulation();
+
+  if (timekeeperPid > 0) {
+    kill(timekeeperPid, SIGTERM);
+    waitpid(timekeeperPid, NULL, 0);
+  }
 
   cleanupAndExit();
   return EXIT_SUCCESS;
 }
 
-void initializeSimulationEnvironment(void) {
-
-  msqId = initMessageQueue();
-  if (msqId < 0) {
-    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to initialize message queue.");
-    exit(EXIT_FAILURE);
-  }
-
-  shmId = initSharedMemory(sizeof(SimulatedClock));
-  if (shmId < 0) {
-    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to initialize shared memory.");
-    exit(EXIT_FAILURE);
-  }
-
-  simClock = attachSharedMemory(sizeof(SimulatedClock));
-
-  if (!simClock) {
-    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to attach shared memory.");
-    exit(EXIT_FAILURE);
-  }
-
-  clockSem = sem_open(clockSemName, O_CREAT, 0644, 1);
-  if (clockSem == SEM_FAILED) {
-    perror("sem_open failed");
-    exit(EXIT_FAILURE);
-  }
-
-  pid_t pid = fork();
-  if (pid == 0) {
-
-    execl("./timekeeper", "timekeeper", (char *)NULL);
-  }
-
-  logFile = fopen(logFileName, "w+");
-  if (!logFile) {
-    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to open log file %s",
-                logFileName);
-    exit(EXIT_FAILURE);
-  }
-}
-
-void launchWorkerProcesses(void) {
-  struct timespec launchDelay = {0, launchInterval * 1000000};
-
-  while (keepRunning && getCurrentChildren() < maxSimultaneous) {
-    int index = findFreeProcessTableEntry();
-    if (index != -1) {
-      unsigned int lifespanSec = (rand() % childTimeLimit) + 1;
-      unsigned int lifespanNSec = rand() % 1000000000;
-
-      pid_t pid = fork();
-      if (pid == 0) {
-        char secStr[32], nsecStr[32];
-        snprintf(secStr, sizeof(secStr), "%u", lifespanSec);
-        snprintf(nsecStr, sizeof(nsecStr), "%u", lifespanNSec);
-        execl("./worker", "worker", secStr, nsecStr, (char *)NULL);
-
-        log_message(LOG_LEVEL_ERROR, "[Worker] execl failed: %s",
-                    strerror(errno));
-        _exit(EXIT_FAILURE);
-      } else if (pid > 0) {
-        updateProcessTableOnFork(index, pid);
-        log_message(LOG_LEVEL_INFO,
-                    "[OSS] Launched worker PID: %d, Lifespan: %u.%u seconds",
-                    pid, lifespanSec, lifespanNSec);
-        nanosleep(&launchDelay, NULL);
-      } else {
-        log_message(LOG_LEVEL_ERROR, "[OSS] Fork failed: %s", strerror(errno));
-        break;
-      }
-    } else {
-      log_message(LOG_LEVEL_INFO,
-                  "[OSS] Waiting for a free process table entry...");
-      sleep(1);
-    }
-  }
-}
-
 void manageSimulation(void) {
-  struct timespec lastLaunchTime;
-  clock_gettime(CLOCK_MONOTONIC, &lastLaunchTime);
   log_message(LOG_LEVEL_INFO, "Simulation management started.");
 
   while (keepRunning) {
-    struct timespec currentTime;
-    clock_gettime(CLOCK_MONOTONIC, &currentTime);
+    sem_wait(clockSem);
+    if (simClock->seconds >= 60) {
+      sem_post(clockSem);
+      break;
+    }
+    sem_post(clockSem);
 
-    launchWorkerProcessesIfNeeded(&lastLaunchTime, &currentTime);
     communicateWithWorkersRoundRobin();
     checkWorkerStatuses();
+
+    launchWorkerProcesses();
+
     logProcessTable();
 
     usleep(100000);
@@ -142,15 +109,37 @@ void manageSimulation(void) {
   log_message(LOG_LEVEL_INFO, "Simulation management ended.");
 }
 
-void launchWorkerProcessesIfNeeded(struct timespec *lastLaunchTime,
-                                   struct timespec *currentTime) {
-  long timeDiff = (currentTime->tv_sec - lastLaunchTime->tv_sec) * 1000 +
-                  (currentTime->tv_nsec - lastLaunchTime->tv_nsec) / 1000000;
+void launchWorkerProcesses(void) {
+  struct timespec launchDelay = {0, launchInterval * 1000000};
 
-  if (timeDiff >= launchInterval) {
-    log_message(LOG_LEVEL_DEBUG, "Launching worker processes as needed.");
-    launchWorkerProcesses();
-    *lastLaunchTime = *currentTime;
+  while (keepRunning && getCurrentChildren() < maxSimultaneous) {
+    int index = findFreeProcessTableEntry();
+    if (index == -1) {
+      log_message(LOG_LEVEL_INFO, "Waiting for a free process table entry...");
+      sleep(1);
+      continue;
+    }
+
+    unsigned int lifespanSec = (rand() % childTimeLimit) + 1;
+    unsigned int lifespanNSec = rand() % 1000000000;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+      char secStr[32], nsecStr[32];
+      snprintf(secStr, sizeof(secStr), "%u", lifespanSec);
+      snprintf(nsecStr, sizeof(nsecStr), "%u", lifespanNSec);
+      execl("./worker", "worker", secStr, nsecStr, (char *)NULL);
+      log_message(LOG_LEVEL_ERROR, "execl failed: %s", strerror(errno));
+      _exit(EXIT_FAILURE);
+    } else if (pid > 0) {
+      updateProcessTableOnFork(index, pid);
+      log_message(LOG_LEVEL_INFO,
+                  "Launched worker PID: %d, Lifespan: %u.%u seconds", pid,
+                  lifespanSec, lifespanNSec);
+      nanosleep(&launchDelay, NULL);
+    } else {
+      log_message(LOG_LEVEL_ERROR, "Fork failed: %s", strerror(errno));
+    }
   }
 }
 
@@ -171,8 +160,7 @@ void communicateWithWorkersRoundRobin(void) {
                     pcb->pid);
       } else {
         log_message(LOG_LEVEL_DEBUG,
-                    "[OSS] Message sent to worker PID %d to proceed.",
-                    pcb->pid);
+                    "Message sent to worker PID %d to proceed.", pcb->pid);
       }
 
       lastIndex = (index + 1) % DEFAULT_MAX_PROCESSES;
@@ -182,7 +170,7 @@ void communicateWithWorkersRoundRobin(void) {
 
   if (!foundActiveWorker) {
     log_message(LOG_LEVEL_DEBUG,
-                "[OSS] No active workers to communicate with at this cycle.");
+                "No active workers to communicate with at this cycle.");
   }
 }
 
@@ -195,15 +183,13 @@ void checkWorkerStatuses(void) {
     if (index != -1) {
       if (msg.mtext == 0) {
         updateProcessTableOnTerminate(msg.mtype);
-        log_message(LOG_LEVEL_INFO, "[OSS] Worker PID %ld has terminated",
-                    msg.mtype);
+        log_message(LOG_LEVEL_INFO, "Worker PID %ld has terminated", msg.mtype);
       } else {
         log_message(LOG_LEVEL_DEBUG,
-                    "[OSS] Received alive message from worker PID %ld",
-                    msg.mtype);
+                    "Received alive message from worker PID %ld", msg.mtype);
       }
     } else {
-      log_message(LOG_LEVEL_WARN, "[OSS] Received message from unknown PID %ld",
+      log_message(LOG_LEVEL_WARN, "Received message from unknown PID %ld",
                   msg.mtype);
     }
   }
@@ -263,76 +249,40 @@ void updateProcessTableOnTerminate(pid_t pid) {
     pcb->startNano = 0;
 
     log_message(LOG_LEVEL_INFO,
-                "[OSS] Process table entry at index %d cleared for PID %d",
-                index, pid);
+                "Process table entry at index %d cleared for PID %d", index,
+                pid);
   } else {
     log_message(LOG_LEVEL_WARN,
-                "[OSS] No process table entry found for PID %d to terminate",
-                pid);
+                "No process table entry found for PID %d to terminate", pid);
   }
 }
 
 void logProcessTable(void) {
-  struct timeval now, elapsed;
-  gettimeofday(&now, NULL);
-  timersub(&now, &startTime, &elapsed);
 
-  if (!logFile) {
-    fprintf(stderr,
-            "Error: logFile is null. Attempting to reopen the log file.\n");
-    logFile = fopen(logFileName, "a");
-    if (!logFile) {
-      perror("Failed to reopen log file");
-      return;
-    }
-  }
-
+  unsigned long simSec, simNano;
   sem_wait(clockSem);
+  simSec = simClock->seconds;
+  simNano = simClock->nanoseconds;
+  sem_post(clockSem);
 
-  fprintf(logFile, "\nCurrent Actual Time: %ld.%06ld seconds\n", elapsed.tv_sec,
-          elapsed.tv_usec);
-  fprintf(logFile, "Current Simulated Time: %lu.%09lu seconds\n",
-          simClock->seconds, simClock->nanoseconds);
-  fprintf(logFile, "Process Table:\n");
-  fprintf(logFile,
-          "Index | Occupied | PID  | Start Time (s.ns)    | End Time (s.ns)\n");
-  fprintf(
-      logFile,
-      "------+----------+------+----------------------+------------------\n");
+  char tableOutput[4096];
+  sprintf(tableOutput, "OSS PID:%d SysClockS: %lu SysclockNano: %lu\n",
+          getpid(), simSec, simNano);
+  strcat(tableOutput, "Process Table:\n");
+  strcat(tableOutput, "Entry Occupied PID StartS StartN\n");
 
   for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
     PCB *pcb = &processTable[i];
+    char row[256];
     if (pcb->occupied) {
-      fprintf(logFile, "%5d | %8d | %4d | %10u.%09u     | TBD\n", i,
-              pcb->occupied, pcb->pid, pcb->startSeconds, pcb->startNano);
+      sprintf(row, "%d 1 %d %u %u\n", i, pcb->pid, pcb->startSeconds,
+              pcb->startNano);
+
     } else {
-      fprintf(logFile, "%5d | %8d |  --- |         ---          | ---\n", i,
-              pcb->occupied);
+      sprintf(row, "%d 0 0 0 0\n", i);
     }
+    strcat(tableOutput, row);
   }
 
-  sem_post(clockSem);
-
-  fflush(logFile);
-}
-
-void initializeSemaphore() {
-  clockSem = sem_open(clockSemName, O_CREAT | O_EXCL, 0644, 1);
-  if (clockSem == SEM_FAILED) {
-    if (errno == EEXIST) {
-
-      clockSem = sem_open(clockSemName, 0);
-      if (clockSem == SEM_FAILED) {
-        log_message(LOG_LEVEL_ERROR, "Failed to open existing semaphore: %s",
-                    strerror(errno));
-        exit(EXIT_FAILURE);
-      }
-    } else {
-      log_message(LOG_LEVEL_ERROR, "Failed to create semaphore: %s",
-                  strerror(errno));
-      exit(EXIT_FAILURE);
-    }
-  }
-
-  log_message(LOG_LEVEL_INFO, "Semaphore initialized successfully");
+  log_message(LOG_LEVEL_INFO, "%s", tableOutput);
 }
