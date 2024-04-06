@@ -8,10 +8,13 @@ ActualTime *actualTime = NULL;
 PCB processTable[DEFAULT_MAX_PROCESSES];
 FILE *logFile = NULL;
 char logFileName[256] = DEFAULT_LOG_FILE_NAME;
-volatile sig_atomic_t keepRunning = 1;
+
 int msqId = -1;
 int shmId = -1;
 int actualTimeShmId = -1;
+
+volatile sig_atomic_t childTerminated = 0;
+volatile sig_atomic_t keepRunning = 1;
 
 int maxProcesses = DEFAULT_MAX_PROCESSES;
 int maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
@@ -56,10 +59,7 @@ int initSharedMemorySegment(key_t key, size_t size, int *shmIdPtr,
   return shmId;
 }
 
-void *attachSharedMemorySegment(int shmId, size_t size,
-                                const char *segmentName) {
-  (void)size;
-
+void *attachSharedMemorySegment(int shmId, const char *segmentName) {
   void *shmPtr = shmat(shmId, NULL, 0);
   if (shmPtr == (void *)-1) {
     log_message(LOG_LEVEL_ERROR, "Attaching %s shared memory failed: %s",
@@ -80,8 +80,8 @@ void initializeSharedMemorySegments(void) {
                               "Simulated Clock") < 0) {
     exit(EXIT_FAILURE);
   }
-  simClock = (SimulatedClock *)attachSharedMemorySegment(
-      shmId, sizeof(SimulatedClock), "Simulated Clock");
+  simClock =
+      (SimulatedClock *)attachSharedMemorySegment(shmId, "Simulated Clock");
   if (simClock == NULL) {
     exit(EXIT_FAILURE);
   }
@@ -96,8 +96,8 @@ void initializeSharedMemorySegments(void) {
                               &actualTimeShmId, "Actual Time") < 0) {
     exit(EXIT_FAILURE);
   }
-  actualTime = (ActualTime *)attachSharedMemorySegment(
-      actualTimeShmId, sizeof(ActualTime), "Actual Time");
+  actualTime =
+      (ActualTime *)attachSharedMemorySegment(actualTimeShmId, "Actual Time");
   if (actualTime == NULL) {
     exit(EXIT_FAILURE);
   }
@@ -108,30 +108,20 @@ void initializeSharedMemorySegments(void) {
 
 int detachSharedMemorySegment(int shmId, void **shmPtr,
                               const char *segmentName) {
-  if (shmId < 0) {
-    log_message(LOG_LEVEL_ERROR, "Invalid shared memory ID (%d) for %s.", shmId,
+  if (shmId < 0 || *shmPtr == NULL) {
+    log_message(LOG_LEVEL_WARN,
+                "Attempted to detach %s shared memory with invalid parameters.",
                 segmentName);
     return -1;
   }
 
-  if (shmPtr == NULL || *shmPtr == NULL) {
-    log_message(LOG_LEVEL_WARN,
-                "No valid pointer to detach from %s shared memory (ID: %d).",
-                segmentName, shmId);
-    return -1;
-  }
-
   if (shmdt(*shmPtr) == -1) {
-    log_message(LOG_LEVEL_ERROR,
-                "Failed to detach from %s shared memory (ID: %d): %s",
-                segmentName, shmId, strerror(errno));
+    log_message(LOG_LEVEL_ERROR, "Failed to detach from %s shared memory: %s",
+                segmentName, strerror(errno));
     return -1;
   }
 
   *shmPtr = NULL;
-  log_message(LOG_LEVEL_INFO,
-              "Successfully detached from %s shared memory (ID: %d).",
-              segmentName, shmId);
   return 0;
 }
 
@@ -149,13 +139,11 @@ const char *processTypeToString(ProcessType type) {
 }
 
 void log_message(int level, const char *format, ...) {
-  if (level < currentLogLevel) {
+  if (level < currentLogLevel)
     return;
-  }
 
   if (pthread_mutex_lock(&logMutex) != 0) {
-
-    fprintf(stderr, "log_message: error locking mutex\n");
+    fprintf(stderr, "Error locking log mutex\n");
     return;
   }
 
@@ -177,8 +165,7 @@ void log_message(int level, const char *format, ...) {
   }
 
   if (pthread_mutex_unlock(&logMutex) != 0) {
-
-    fprintf(stderr, "log_message: error unlocking mutex\n");
+    fprintf(stderr, "Error unlocking log mutex\n");
   }
 }
 
@@ -257,7 +244,6 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
 }
 
 void initializeSemaphore(const char *semName) {
-
   sem_unlink(semName);
   clockSem = sem_open(semName, O_CREAT | O_EXCL, SEM_PERMISSIONS, 1);
   if (clockSem == SEM_FAILED) {
@@ -267,15 +253,15 @@ void initializeSemaphore(const char *semName) {
 }
 
 void cleanupSharedResources(void) {
+  if (clockSem != SEM_FAILED) {
+    sem_wait(clockSem);
 
-  sem_wait(clockSem);
+    detachSharedMemorySegment(shmId, (void **)&simClock, "Simulated Clock");
 
-  detachSharedMemorySegment(shmId, (void **)&simClock, "Simulated Clock");
-
-  sem_close(clockSem);
-  sem_unlink(clockSemName);
-
-  sem_post(clockSem);
+    sem_close(clockSem);
+    sem_unlink(clockSemName);
+    clockSem = SEM_FAILED;
+  }
 }
 
 void prepareAndSendMessage(int msqId, pid_t pid, int message) {

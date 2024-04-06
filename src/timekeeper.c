@@ -16,8 +16,8 @@ void runTimekeeper(void) {
     exit(EXIT_FAILURE);
   }
 
-  simClock = (SimulatedClock *)attachSharedMemorySegment(
-      shmId, sizeof(SimulatedClock), "Simulated Clock");
+  simClock =
+      (SimulatedClock *)attachSharedMemorySegment(shmId, "Simulated Clock");
 
   if (simClock == NULL) {
     log_message(LOG_LEVEL_ERROR,
@@ -34,8 +34,8 @@ void runTimekeeper(void) {
     exit(EXIT_FAILURE);
   }
 
-  actualTime = (ActualTime *)attachSharedMemorySegment(
-      actualTimeShmId, sizeof(ActualTime), "Actual Time");
+  actualTime =
+      (ActualTime *)attachSharedMemorySegment(actualTimeShmId, "Actual Time");
 
   if (actualTime == NULL) {
     log_message(LOG_LEVEL_ERROR,

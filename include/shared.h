@@ -93,10 +93,12 @@ extern ActualTime *actualTime;
 extern PCB processTable[DEFAULT_MAX_PROCESSES];
 extern FILE *logFile;
 extern char logFileName[256];
-extern volatile sig_atomic_t keepRunning;
 extern int msqId;
 extern int shmId;
 extern int actualTimeShmId;
+
+extern volatile sig_atomic_t keepRunning;
+extern volatile sig_atomic_t childTerminated;
 
 extern int maxProcesses;
 extern int maxSimultaneous;
@@ -118,8 +120,7 @@ void log_message(int level, const char *format, ...);
 
 key_t getSharedMemoryKey(const char *path, int proj_id);
 
-void *attachSharedMemorySegment(int shmId, size_t size,
-                                const char *segmentName);
+void *attachSharedMemorySegment(int shmId, const char *segmentName);
 int initSharedMemorySegment(key_t key, size_t size, int *shmIdPtr,
                             const char *segmentName);
 int detachSharedMemorySegment(int shmId, void **shmPtr,

@@ -1,43 +1,50 @@
 #include "process.h"
 #include "shared.h"
 
-void setupSignalHandlers(void) {
-  struct sigaction sa;
-  memset(&sa, 0, sizeof(sa));
-  sa.sa_handler = genericSignalHandler;
-  sigemptyset(&sa.sa_mask);
-
-  int signals[] = {SIGINT, SIGTERM, SIGALRM, SIGCHLD};
-  for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); ++i) {
-    if (sigaction(signals[i], &sa, NULL) == -1) {
-      log_message(LOG_LEVEL_ERROR, "Error setting up handler for signal %d: %s",
-                  signals[i], strerror(errno));
-      exit(EXIT_FAILURE);
-    }
-  }
+void signalSafeLog(const char *msg) {
+  write(STDERR_FILENO, msg, strlen(msg));
+  write(STDERR_FILENO, "\n", 1);
 }
 
 void genericSignalHandler(int sig) {
   switch (sig) {
   case SIGINT:
   case SIGTERM:
-    log_message(LOG_LEVEL_INFO,
-                "Termination signal (%d) received, initiating cleanup...", sig);
+    signalSafeLog("Shutdown requested.");
     keepRunning = 0;
     break;
   case SIGALRM:
-    log_message(LOG_LEVEL_INFO, "Timer expired. Exiting...");
+    signalSafeLog("Timer expired.");
     keepRunning = 0;
     break;
   case SIGCHLD:
-    log_message(LOG_LEVEL_INFO, "Child process terminated.");
-    while (waitpid(-1, NULL, WNOHANG) > 0)
-      ;
-    keepRunning = 0;
+    signalSafeLog("Child process terminated.");
+    childTerminated = 1;
+
     break;
   default:
-    log_message(LOG_LEVEL_WARN, "Unhandled signal (%d) received", sig);
+    signalSafeLog("Unhandled signal received.");
     keepRunning = 0;
     break;
+  }
+}
+
+void setupSignalHandlers(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = genericSignalHandler;
+  sigemptyset(&sa.sa_mask);
+
+  sigaddset(&sa.sa_mask, SIGINT);
+  sigaddset(&sa.sa_mask, SIGTERM);
+  sigaddset(&sa.sa_mask, SIGALRM);
+  sigaddset(&sa.sa_mask, SIGCHLD);
+
+  int signals[] = {SIGINT, SIGTERM, SIGALRM, SIGCHLD};
+  for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); ++i) {
+    if (sigaction(signals[i], &sa, NULL) == -1) {
+      signalSafeLog("Error setting up signal handler.");
+      _exit(EXIT_FAILURE);
+    }
   }
 }

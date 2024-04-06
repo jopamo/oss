@@ -110,10 +110,9 @@ void initializeWorkerResources(void) {
     exit(EXIT_FAILURE);
   }
 
-  msqId = msgget(IPC_PRIVATE, 0666 | IPC_CREAT);
   if (msqId == -1) {
-    log_message(LOG_LEVEL_ERROR, "[Worker %d] Failed to create message queue.",
-                getpid());
+    log_message(LOG_LEVEL_ERROR,
+                "[Worker %d] Message queue ID is not initialized.", getpid());
     exit(EXIT_FAILURE);
   }
 
