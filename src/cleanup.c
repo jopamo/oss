@@ -1,100 +1,74 @@
+#include "process.h"
+
 #include "cleanup.h"
 #include "shared.h"
 
 volatile sig_atomic_t cleanupInitiated = 0;
 
-void setupSignalHandlers(void) {
-  struct sigaction sa = {0};
-  sa.sa_handler = signalHandler;
-  sigemptyset(&sa.sa_mask);
-
-  if (sigaction(SIGINT, &sa, NULL) == -1) {
-    log_message(LOG_LEVEL_ERROR, "Error setting SIGINT handler: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
-  if (sigaction(SIGALRM, &sa, NULL) == -1) {
-    log_message(LOG_LEVEL_ERROR, "Error setting SIGALRM handler: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
-  alarm(60);
-
-  sa.sa_handler = SIG_IGN;
-  if (sigaction(SIGCHLD, &sa, NULL) == -1) {
-    log_message(LOG_LEVEL_ERROR, "Error setting SIGCHLD to ignore: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-}
-
-void atexitHandler(void) {
-
-  if (!cleanupInitiated) {
-    cleanupResources();
-  }
-}
+void atexitHandler(void) { cleanupResources(); }
 
 void cleanupResources(void) {
-  if (cleanupInitiated)
+  if (__sync_lock_test_and_set(&cleanupInitiated, 1)) {
     return;
-  cleanupInitiated = 1;
-  log_message(LOG_LEVEL_INFO, "Initiating cleanup process...");
+  }
 
+  semaphore_cleanup();
+
+  logFile_cleanup();
+
+  killAllWorkers();
+
+  sharedMemory_cleanup();
+
+  messageQueue_cleanup();
+}
+
+void semaphore_cleanup(void) {
   if (clockSem != NULL) {
-    if (sem_close(clockSem) == -1) {
-      log_message(LOG_LEVEL_ERROR, "Failed to close semaphore: %s",
-                  strerror(errno));
-    }
-    if (gProcessType == PROCESS_TYPE_OSS) {
-      if (sem_unlink(clockSemName) == -1) {
-        log_message(LOG_LEVEL_ERROR, "Failed to unlink semaphore: %s",
-                    strerror(errno));
-      }
-    }
+    sem_close(clockSem);
+    sem_unlink(clockSemName);
     clockSem = NULL;
-  }
-
-  if (logFile) {
-    fclose(logFile);
-    logFile = NULL;
-    log_message(LOG_LEVEL_DEBUG, "Log file closed successfully.");
-  }
-
-  if (gProcessType == PROCESS_TYPE_OSS) {
-    killAllWorkers();
-  }
-
-  if (detachSharedMemory() == 0) {
-    log_message(LOG_LEVEL_DEBUG, "Shared memory detached successfully.");
-  }
-
-  if (gProcessType == PROCESS_TYPE_OSS && cleanupSharedMemory() == 0) {
-    log_message(LOG_LEVEL_DEBUG, "Shared memory segment marked for deletion.");
-  }
-
-  if (gProcessType == PROCESS_TYPE_OSS && cleanupMessageQueue() == 0) {
-    log_message(LOG_LEVEL_DEBUG, "Message queue removed successfully.");
   }
 }
 
-void signalHandler(int sig) {
-  switch (sig) {
-  case SIGINT:
-    log_message(LOG_LEVEL_INFO,
-                "Interrupt signal received. Initiating cleanup...");
-    break;
-  case SIGALRM:
-    log_message(LOG_LEVEL_INFO,
-                "Maximum runtime reached (60 seconds). Initiating cleanup...");
-    break;
-  default:
-    log_message(LOG_LEVEL_WARN, "Unhandled signal received: %d", sig);
-    return;
+void logFile_cleanup(void) {
+  if (logFile) {
+    fflush(stdout);
+    fclose(logFile);
+    logFile = NULL;
   }
-  cleanupAndExit();
+}
+
+void sharedMemory_cleanup(void) {
+  cleanupSharedMemorySegment((void **)&simClock, shmId);
+  cleanupSharedMemorySegment((void **)&actualTime, actualTimeShmId);
+}
+
+int cleanupSharedMemorySegment(void **shmPtr, int shmId) {
+  if (*shmPtr != NULL && shmdt(*shmPtr) == -1) {
+    perror("Failed to detach shared memory");
+    *shmPtr = NULL;
+    return -1;
+  }
+  *shmPtr = NULL;
+
+  if (shmctl(shmId, IPC_RMID, NULL) == -1) {
+    perror("Failed to mark shared memory for deletion");
+    return -1;
+  }
+
+  return 0;
+}
+
+int messageQueue_cleanup(void) {
+  if (msqId != -1) {
+    if (msgctl(msqId, IPC_RMID, NULL) == -1) {
+      perror("Message queue removal failed");
+      return -1;
+    }
+    msqId = -1;
+  }
+  return 0;
 }
 
 void killAllWorkers(void) {
@@ -176,16 +150,7 @@ void setupTimeout(int seconds) {
 }
 
 void cleanupAndExit(void) {
-  log_message(LOG_LEVEL_INFO, "Initiating cleanup.");
-
-  killAllWorkers();
   cleanupResources();
-
-  if (logFile) {
-    fclose(logFile);
-    logFile = NULL;
-  }
-
-  log_message(LOG_LEVEL_INFO, "Cleanup completed. Exiting now.");
+  log_message(LOG_LEVEL_INFO, "Cleanup completed, exiting...");
   _exit(EXIT_SUCCESS);
 }

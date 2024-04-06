@@ -1,15 +1,26 @@
 #ifndef CLEANUP_H
 #define CLEANUP_H
 
-#include <signal.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-void atexitHandler(void);
 void cleanupResources(void);
-int cleanupMessageQueue(void);
-int cleanupSharedMemory(void);
+void semaphore_cleanup(void);
+void logFile_cleanup(void);
 void killAllWorkers(void);
-void setupSignalHandlers(void);
+int cleanupSharedMemory(void);
+int cleanupMessageQueue(void);
 void cleanupAndExit(void);
-void signalHandler(int sig);
+void atexitHandler(void);
+
+void sharedMemory_cleanup(void);
+int messageQueue_cleanup(void);
+
+int cleanupSharedMemorySegment(void **segment, int shmId);
+void setupTimeout(int seconds);
 
 #endif
