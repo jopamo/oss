@@ -10,7 +10,8 @@ FILE *logFile = NULL;
 char logFileName[256] = DEFAULT_LOG_FILE_NAME;
 
 int msqId = -1;
-int shmId = -1;
+
+int simulatedTimeShmId = -1;
 int actualTimeShmId = -1;
 
 volatile sig_atomic_t childTerminated = 0;
@@ -25,7 +26,7 @@ int currentChildren = 0;
 
 int currentLogLevel = LOG_LEVEL_DEBUG;
 
-sem_t *clockSem = NULL;
+sem_t *clockSem = SEM_FAILED;
 const char *clockSemName = "/simClockSem";
 
 pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -33,95 +34,41 @@ pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER;
 int getCurrentChildren(void) { return currentChildren; }
 void setCurrentChildren(int value) { currentChildren = value; }
 
-int initSharedMemorySegment(key_t key, size_t size, int *shmIdPtr,
-                            const char *segmentName) {
-  shmId = shmget(key, size, 0600 | IPC_CREAT | IPC_EXCL);
-  if (shmId < 0) {
-    if (errno == EEXIST) {
-      shmId = shmget(key, size, 0600);
-      if (shmId < 0) {
-        log_message(LOG_LEVEL_ERROR, "%s shmget existing failed: %s",
-                    segmentName, strerror(errno));
-        return -1;
-      }
-      log_message(LOG_LEVEL_INFO, "%s shared memory segment attached, shmId=%d",
-                  segmentName, shmId);
-    } else {
-      log_message(LOG_LEVEL_ERROR, "%s shmget failed: %s", segmentName,
-                  strerror(errno));
-      return -1;
-    }
-  } else {
-    log_message(LOG_LEVEL_INFO, "%s shared memory segment created, shmId=%d",
-                segmentName, shmId);
+void *attachSharedMemory(int shmId, const char *segmentName) {
+  if (shmId < 0 || segmentName == NULL) {
+    log_message(LOG_LEVEL_ERROR, "Invalid shared memory ID for %s",
+                segmentName);
+    return NULL;
   }
-  *shmIdPtr = shmId;
-  return shmId;
-}
 
-void *attachSharedMemorySegment(int shmId, const char *segmentName) {
   void *shmPtr = shmat(shmId, NULL, 0);
   if (shmPtr == (void *)-1) {
-    log_message(LOG_LEVEL_ERROR, "Attaching %s shared memory failed: %s",
+    log_message(LOG_LEVEL_ERROR, "Attaching to %s shared memory failed: %s",
                 segmentName, strerror(errno));
     return NULL;
   }
+
+  log_message(LOG_LEVEL_INFO, "Successfully attached to %s shared memory.",
+              segmentName);
   return shmPtr;
 }
 
-void initializeSharedMemorySegments(void) {
-  key_t simClockKey = ftok(SHM_PATH, SHM_PROJ_ID);
-  if (simClockKey == -1) {
-    log_message(LOG_LEVEL_ERROR, "ftok for Simulated Clock failed: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-  if (initSharedMemorySegment(simClockKey, sizeof(SimulatedClock), &shmId,
-                              "Simulated Clock") < 0) {
-    exit(EXIT_FAILURE);
-  }
-  simClock =
-      (SimulatedClock *)attachSharedMemorySegment(shmId, "Simulated Clock");
-  if (simClock == NULL) {
-    exit(EXIT_FAILURE);
-  }
-
-  key_t actualTimeKey = ftok(SHM_PATH, SHM_PROJ_ID + 1);
-  if (actualTimeKey == -1) {
-    log_message(LOG_LEVEL_ERROR, "ftok for Actual Time failed: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-  if (initSharedMemorySegment(actualTimeKey, sizeof(ActualTime),
-                              &actualTimeShmId, "Actual Time") < 0) {
-    exit(EXIT_FAILURE);
-  }
-  actualTime =
-      (ActualTime *)attachSharedMemorySegment(actualTimeShmId, "Actual Time");
-  if (actualTime == NULL) {
-    exit(EXIT_FAILURE);
-  }
-
-  log_message(LOG_LEVEL_INFO, "Shared memory for Simulated Clock and Actual "
-                              "Time initialized and attached.");
-}
-
-int detachSharedMemorySegment(int shmId, void **shmPtr,
-                              const char *segmentName) {
-  if (shmId < 0 || *shmPtr == NULL) {
-    log_message(LOG_LEVEL_WARN,
-                "Attempted to detach %s shared memory with invalid parameters.",
-                segmentName);
+int detachSharedMemory(void **shmPtr, const char *segmentName) {
+  if (shmPtr == NULL || *shmPtr == NULL) {
+    log_message(LOG_LEVEL_ERROR,
+                "Invalid pointer for detaching %s shared memory.", segmentName);
     return -1;
   }
 
   if (shmdt(*shmPtr) == -1) {
-    log_message(LOG_LEVEL_ERROR, "Failed to detach from %s shared memory: %s",
+    log_message(LOG_LEVEL_ERROR, "Detaching from %s shared memory failed: %s",
                 segmentName, strerror(errno));
     return -1;
   }
 
   *shmPtr = NULL;
+  log_message(LOG_LEVEL_INFO, "Successfully detached from %s shared memory.",
+              segmentName);
   return 0;
 }
 
@@ -170,12 +117,13 @@ void log_message(int level, const char *format, ...) {
 }
 
 key_t getSharedMemoryKey(const char *path, int proj_id) {
-  static key_t key = -1;
+  key_t key = ftok(path, proj_id);
   if (key == -1) {
-    key = ftok(path, proj_id);
-    if (key == -1) {
-      log_message(LOG_LEVEL_ERROR, "ftok failed: %s", strerror(errno));
-    }
+    log_message(LOG_LEVEL_ERROR, "ftok failed for proj_id %d: %s", proj_id,
+                strerror(errno));
+  } else {
+    log_message(LOG_LEVEL_INFO,
+                "ftok success for proj_id %d: Key generated: %d", proj_id, key);
   }
   return key;
 }
@@ -244,13 +192,29 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
 }
 
 void cleanupSharedResources(void) {
+
+  if (simClock) {
+    if (detachSharedMemory((void **)&simClock, "Simulated Clock") == 0) {
+      log_message(LOG_LEVEL_INFO,
+                  "Detached from Simulated Clock shared memory.");
+    }
+    simClock = NULL;
+  }
+
+  if (actualTime) {
+    if (detachSharedMemory((void **)&actualTime, "Actual Time") == 0) {
+      log_message(LOG_LEVEL_INFO, "Detached from Actual Time shared memory.");
+    }
+    actualTime = NULL;
+  }
+
   if (clockSem != SEM_FAILED) {
-    sem_wait(clockSem);
-
-    detachSharedMemorySegment(shmId, (void **)&simClock, "Simulated Clock");
-
-    sem_close(clockSem);
-    sem_unlink(clockSemName);
+    if (sem_close(clockSem) == 0) {
+      log_message(LOG_LEVEL_INFO, "Closed semaphore.");
+    }
+    if (sem_unlink(clockSemName) == 0) {
+      log_message(LOG_LEVEL_INFO, "Unlinked semaphore.");
+    }
     clockSem = SEM_FAILED;
   }
 }
@@ -262,5 +226,50 @@ void prepareAndSendMessage(int msqId, pid_t pid, int message) {
 
   if (msgsnd(msqId, &msg, sizeof(msg.mtext), 0) == -1) {
     perror("msgsnd failed");
+  }
+}
+
+void setupSharedMemory(void) {
+
+  key_t simClockKey = getSharedMemoryKey(SHM_PATH, SHM_PROJ_ID_SIM_CLOCK);
+  key_t actualTimeKey = getSharedMemoryKey(SHM_PATH, SHM_PROJ_ID_ACT_TIME);
+
+  if (simClockKey == (key_t)-1 || actualTimeKey == (key_t)-1) {
+    log_message(LOG_LEVEL_ERROR, "Failed to generate keys for shared memory.");
+    exit(EXIT_FAILURE);
+  }
+
+  simulatedTimeShmId = shmget(simClockKey, sizeof(SimulatedClock), 0666);
+  if (simulatedTimeShmId == -1) {
+    simulatedTimeShmId =
+        shmget(simClockKey, sizeof(SimulatedClock), IPC_CREAT | 0666);
+    if (simulatedTimeShmId == -1) {
+      log_message(LOG_LEVEL_ERROR,
+                  "Failed to create Simulated Clock shared memory.");
+      exit(EXIT_FAILURE);
+    }
+  }
+  simClock = (SimulatedClock *)shmat(simulatedTimeShmId, NULL, 0);
+  if (simClock == (void *)-1) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to attach to Simulated Clock shared memory.");
+    exit(EXIT_FAILURE);
+  }
+
+  actualTimeShmId = shmget(actualTimeKey, sizeof(ActualTime), 0666);
+  if (actualTimeShmId == -1) {
+    actualTimeShmId =
+        shmget(actualTimeKey, sizeof(ActualTime), IPC_CREAT | 0666);
+    if (actualTimeShmId == -1) {
+      log_message(LOG_LEVEL_ERROR,
+                  "Failed to create Actual Time shared memory.");
+      exit(EXIT_FAILURE);
+    }
+  }
+  actualTime = (ActualTime *)shmat(actualTimeShmId, NULL, 0);
+  if (actualTime == (void *)-1) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to attach to Actual Time shared memory.");
+    exit(EXIT_FAILURE);
   }
 }

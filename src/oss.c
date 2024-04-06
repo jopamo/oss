@@ -7,8 +7,6 @@
 #include "process.h"
 #include "shared.h"
 
-pid_t timekeeperPid = -1;
-
 void initializeSimulationEnvironment(void);
 void launchWorkerProcesses(void);
 void manageSimulation(void);
@@ -23,9 +21,6 @@ void updateProcessTableOnTerminate(pid_t pid);
 void signalHandler(int sig) {
   if (sig == SIGINT || sig == SIGTERM) {
     keepRunning = 0;
-    if (timekeeperPid > 0) {
-      kill(timekeeperPid, SIGTERM);
-    }
   }
 }
 
@@ -38,18 +33,7 @@ void setupSignalHandling(void) {
 }
 
 void initializeSimulationEnvironment(void) {
-  initializeSharedMemorySegments();
-
-  timekeeperPid = fork();
-  if (timekeeperPid == 0) {
-    execl("./timekeeper", "timekeeper", (char *)NULL);
-    log_message(LOG_LEVEL_ERROR, "Failed to start timekeeper: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  } else if (timekeeperPid < 0) {
-    log_message(LOG_LEVEL_ERROR, "Fork failed: %s", strerror(errno));
-    exit(EXIT_FAILURE);
-  }
+  setupSharedMemory();
 
   msqId = initMessageQueue();
   if (msqId < 0) {
@@ -62,45 +46,68 @@ void initializeSimulationEnvironment(void) {
     log_message(LOG_LEVEL_ERROR, "Failed to open log file %s", logFileName);
     exit(EXIT_FAILURE);
   }
+
+  log_message(LOG_LEVEL_DEBUG, "[%d] Simulated Clock shmId: %d", getpid(),
+              simulatedTimeShmId);
+  log_message(LOG_LEVEL_DEBUG, "[%d] Actual Time shmId: %d", getpid(),
+              actualTimeShmId);
+
+  pid_t timekeeperPid = fork();
+  if (timekeeperPid == 0) {
+    execl("./timekeeper", "timekeeper", (char *)NULL);
+
+    log_message(LOG_LEVEL_ERROR, "Failed to start timekeeper process: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  } else if (timekeeperPid < 0) {
+    log_message(LOG_LEVEL_ERROR, "Failed to fork timekeeper process: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
 }
 
 int main(int argc, char *argv[]) {
-  setupSignalHandlers();
+  gProcessType = PROCESS_TYPE_OSS;
+  setupSignalHandlers(getpid());
+
   initializeSemaphore(clockSemName);
 
   ossArgs(argc, argv);
 
   atexit(atexitHandler);
-  setupTimeout(60);
+  setupTimeout(MAX_RUNTIME);
 
   initializeSimulationEnvironment();
   manageSimulation();
-
-  if (timekeeperPid > 0) {
-    kill(timekeeperPid, SIGTERM);
-    waitpid(timekeeperPid, NULL, 0);
-  }
 
   cleanupAndExit();
   return EXIT_SUCCESS;
 }
 
 void manageSimulation(void) {
+  gProcessType = PROCESS_TYPE_OSS;
   log_message(LOG_LEVEL_INFO, "Simulation management started.");
 
   while (keepRunning) {
-    sem_wait(clockSem);
-    if (simClock->seconds >= 60) {
+    if (sem_wait(clockSem) == -1) {
+      log_message(LOG_LEVEL_ERROR, "Failed to lock semaphore: %s",
+                  strerror(errno));
+
+      if (errno != EINTR)
+        break;
+      continue;
+    }
+
+    if (simClock && simClock->seconds >= MAX_RUNTIME) {
       sem_post(clockSem);
       break;
     }
+
     sem_post(clockSem);
 
     communicateWithWorkersRoundRobin();
     checkWorkerStatuses();
-
     launchWorkerProcesses();
-
     logProcessTable();
 
     usleep(100000);
@@ -226,6 +233,7 @@ void updateProcessTableOnFork(int index, pid_t pid) {
     PCB *pcb = &processTable[index];
     pcb->occupied = 1;
     pcb->pid = pid;
+
     pcb->startSeconds = simClock->seconds;
     pcb->startNano = simClock->nanoseconds;
 

@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-void setupSignalHandlers(void);
+void setupSignalHandlers(pid_t pid);
 void genericSignalHandler(int sig);
 
 #endif

@@ -5,67 +5,39 @@
 #include "shared.h"
 
 void runTimekeeper(void) {
+  setupSharedMemory();
+
+  setupSignalHandlers(getpid());
+
   log_message(LOG_LEVEL_INFO, "Starting timekeeping service.");
 
-  key_t simClockKey = ftok(SHM_PATH, SHM_PROJ_ID);
+  simClock = (SimulatedClock *)attachSharedMemory(simulatedTimeShmId,
+                                                  "Simulated Clock");
+  actualTime = (ActualTime *)attachSharedMemory(actualTimeShmId, "Actual Time");
 
-  if (initSharedMemorySegment(simClockKey, sizeof(SimulatedClock), &shmId,
-                              "Simulated Clock") < 0) {
-    log_message(LOG_LEVEL_ERROR,
-                "Failed to initialize shared memory for Simulated Clock.");
+  if (!simClock || !actualTime) {
+    log_message(LOG_LEVEL_ERROR, "Failed to attach to shared memory segments.");
     exit(EXIT_FAILURE);
   }
 
-  simClock =
-      (SimulatedClock *)attachSharedMemorySegment(shmId, "Simulated Clock");
-
-  if (simClock == NULL) {
-    log_message(LOG_LEVEL_ERROR,
-                "Failed to attach to shared memory for Simulated Clock.");
-    exit(EXIT_FAILURE);
+  if (!simClock->initialized) {
+    simClock->seconds = 0;
+    simClock->nanoseconds = 0;
+    simClock->initialized = 1;
   }
 
-  key_t actualTimeKey = ftok(SHM_PATH, SHM_PROJ_ID + 1);
-  if (initSharedMemorySegment(actualTimeKey, sizeof(ActualTime),
-                              &actualTimeShmId, "Actual Time") < 0) {
-
-    log_message(LOG_LEVEL_ERROR,
-                "Failed to initialize shared memory for Actual Time.");
-    exit(EXIT_FAILURE);
-  }
-
-  actualTime =
-      (ActualTime *)attachSharedMemorySegment(actualTimeShmId, "Actual Time");
-
-  if (actualTime == NULL) {
-    log_message(LOG_LEVEL_ERROR,
-                "Failed to attach to shared memory for Actual Time.");
-    exit(EXIT_FAILURE);
-  }
-
-  clockSem = sem_open(clockSemName, 0);
+  clockSem = sem_open(clockSemName, O_CREAT, SEM_PERMISSIONS, 1);
   if (clockSem == SEM_FAILED) {
-    clockSem = sem_open(clockSemName, O_CREAT | O_EXCL, SEM_PERMISSIONS, 1);
-    if (clockSem == SEM_FAILED) {
-      log_message(LOG_LEVEL_ERROR, "Failed to open semaphore: %s",
-                  strerror(errno));
-      exit(EXIT_FAILURE);
-    } else {
-      log_message(LOG_LEVEL_INFO, "New semaphore created.");
-    }
-  } else {
-    log_message(LOG_LEVEL_INFO, "Existing semaphore opened.");
+    log_message(LOG_LEVEL_ERROR, "Failed to open or create semaphore: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
   }
-
-  simClock->seconds = 0;
-  simClock->nanoseconds = 0;
-  simClock->initialized = 1;
-
-  struct timespec startTime, currentTime;
-  clock_gettime(CLOCK_MONOTONIC, &startTime);
 
   double simSpeedFactor = 0.28;
   long simIncrementPerCycle = (long)(simSpeedFactor * NANOSECONDS_IN_SECOND);
+
+  struct timespec startTime, currentTime;
+  clock_gettime(CLOCK_MONOTONIC, &startTime);
 
   while (keepRunning) {
     nanosleep(&(struct timespec){0, 250000000L}, NULL);
@@ -99,16 +71,18 @@ void runTimekeeper(void) {
                   strerror(errno));
     }
 
-    if (actualTime->seconds >= 60) {
+    if (actualTime->seconds >= MAX_RUNTIME) {
       keepRunning = 0;
     }
   }
+
+  log_message(LOG_LEVEL_INFO, "Timekeeping service ending.");
 }
 
 int main(void) {
   gProcessType = PROCESS_TYPE_TIMEKEEPER;
 
-  setupSignalHandlers();
+  setupSignalHandlers(getpid());
   runTimekeeper();
 
   cleanupSharedResources();

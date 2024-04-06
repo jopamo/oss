@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -16,17 +17,19 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <pthread.h>
-
 #define MSG_PATH "/tmp"
 #define MSG_PROJ_ID 'a'
 
 #define SHM_PATH "/tmp"
-#define SHM_PROJ_ID 'b'
+#define SHM_PROJ_ID_SIM_CLOCK 'S'
+#define SHM_PROJ_ID_ACT_TIME 'A'
 
 #define SEM_PERMISSIONS 0600
 
 #define MAX_RUNTIME 60
+
+#define TIMEKEEPER_SIM_SPEED_FACTOR 0.28
+
 #define DEFAULT_MAX_PROCESSES 5
 #define DEFAULT_MAX_SIMULTANEOUS 10
 #define DEFAULT_CHILD_TIME_LIMIT 10
@@ -55,22 +58,14 @@ typedef struct {
   unsigned long seconds;
   unsigned long nanoseconds;
   int initialized;
-
-} SimulatedClock;
-
-typedef struct {
-  unsigned long seconds;
-  unsigned long nanoseconds;
-  int initialized;
-
-} ActualTime;
+} SimulatedClock, ActualTime;
 
 typedef struct {
   long mtype;
   int mtext;
 } Message;
 
-typedef struct PCB {
+typedef struct {
   int occupied;
   pid_t pid;
   unsigned int startSeconds;
@@ -93,8 +88,9 @@ extern ActualTime *actualTime;
 extern PCB processTable[DEFAULT_MAX_PROCESSES];
 extern FILE *logFile;
 extern char logFileName[256];
+
 extern int msqId;
-extern int shmId;
+extern int simulatedTimeShmId;
 extern int actualTimeShmId;
 
 extern volatile sig_atomic_t keepRunning;
@@ -105,8 +101,6 @@ extern int maxSimultaneous;
 extern int childTimeLimit;
 extern int launchInterval;
 extern int currentChildren;
-
-extern int currentLogLevel;
 
 extern sem_t *clockSem;
 extern const char *clockSemName;
@@ -119,21 +113,16 @@ void setCurrentChildren(int value);
 void log_message(int level, const char *format, ...);
 
 key_t getSharedMemoryKey(const char *path, int proj_id);
-
-void *attachSharedMemorySegment(int shmId, const char *segmentName);
-int initSharedMemorySegment(key_t key, size_t size, int *shmIdPtr,
-                            const char *segmentName);
-int detachSharedMemorySegment(int shmId, void **shmPtr,
-                              const char *segmentName);
+void *attachSharedMemory(int shmId, const char *segmentName);
+int detachSharedMemory(void **shmPtr, const char *segmentName);
 
 int initMessageQueue(void);
 int sendMessage(int msqId, Message *msg);
 int receiveMessage(int msqId, Message *msg, long msgType, int flags);
 
 void cleanupSharedResources(void);
-
-void initializeSharedMemorySegments(void);
-
 void prepareAndSendMessage(int msqId, pid_t pid, int message);
+
+void setupSharedMemory(void);
 
 #endif
