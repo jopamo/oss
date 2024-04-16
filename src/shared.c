@@ -3,9 +3,12 @@
 ProcessType gProcessType;
 struct timeval startTime;
 struct timeval lastLogTime;
+
 SimulatedClock *simClock = NULL;
 ActualTime *actualTime = NULL;
-PCB processTable[DEFAULT_MAX_PROCESSES];
+
+PCB *processTable;
+
 FILE *logFile = NULL;
 char logFileName[256] = DEFAULT_LOG_FILE_NAME;
 
@@ -13,6 +16,7 @@ int msqId = -1;
 
 int simulatedTimeShmId = -1;
 int actualTimeShmId = -1;
+int processTableShmId = -1;
 
 volatile sig_atomic_t childTerminated = 0;
 volatile sig_atomic_t keepRunning = 1;
@@ -34,22 +38,21 @@ pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER;
 int getCurrentChildren(void) { return currentChildren; }
 void setCurrentChildren(int value) { currentChildren = value; }
 
-void *attachSharedMemory(int shmId, const char *segmentName) {
-  if (shmId < 0 || segmentName == NULL) {
-    log_message(LOG_LEVEL_ERROR, "Invalid shared memory ID for %s",
-                segmentName);
-    return NULL;
-  }
-
-  void *shmPtr = shmat(shmId, NULL, 0);
-  if (shmPtr == (void *)-1) {
-    log_message(LOG_LEVEL_ERROR, "Attaching to %s shared memory failed: %s",
+void *attachSharedMemory(const char *path, int proj_id, size_t size,
+                         const char *segmentName) {
+  key_t key = getSharedMemoryKey(path, proj_id);
+  int shmId = shmget(key, size, 0666 | IPC_CREAT);
+  if (shmId < 0) {
+    log_message(LOG_LEVEL_ERROR, "Failed to obtain shmId for %s: %s",
                 segmentName, strerror(errno));
     return NULL;
   }
-
-  log_message(LOG_LEVEL_INFO, "Successfully attached to %s shared memory.",
-              segmentName);
+  void *shmPtr = shmat(shmId, NULL, 0);
+  if (shmPtr == (void *)-1) {
+    log_message(LOG_LEVEL_ERROR, "Failed to attach to %s shared memory: %s",
+                segmentName, strerror(errno));
+    return NULL;
+  }
   return shmPtr;
 }
 
@@ -192,7 +195,6 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
 }
 
 void cleanupSharedResources(void) {
-
   if (simClock) {
     if (detachSharedMemory((void **)&simClock, "Simulated Clock") == 0) {
       log_message(LOG_LEVEL_INFO,
@@ -207,69 +209,81 @@ void cleanupSharedResources(void) {
     }
     actualTime = NULL;
   }
-
-  if (clockSem != SEM_FAILED) {
-    if (sem_close(clockSem) == 0) {
-      log_message(LOG_LEVEL_INFO, "Closed semaphore.");
-    }
-    if (sem_unlink(clockSemName) == 0) {
-      log_message(LOG_LEVEL_INFO, "Unlinked semaphore.");
-    }
-    clockSem = SEM_FAILED;
-  }
 }
 
-void prepareAndSendMessage(int msqId, pid_t pid, int message) {
-  Message msg;
-  msg.mtype = pid;
-  msg.mtext = message;
-
-  if (msgsnd(msqId, &msg, sizeof(msg.mtext), 0) == -1) {
-    perror("msgsnd failed");
-  }
-}
-
-void setupSharedMemory(void) {
-
-  key_t simClockKey = getSharedMemoryKey(SHM_PATH, SHM_PROJ_ID_SIM_CLOCK);
-  key_t actualTimeKey = getSharedMemoryKey(SHM_PATH, SHM_PROJ_ID_ACT_TIME);
-
-  if (simClockKey == (key_t)-1 || actualTimeKey == (key_t)-1) {
-    log_message(LOG_LEVEL_ERROR, "Failed to generate keys for shared memory.");
+void initializeSharedResources(void) {
+  clockSem = sem_open(clockSemName, 0);
+  if (clockSem == SEM_FAILED) {
+    log_message(LOG_LEVEL_ERROR, "Failed to create or open semaphore: %s",
+                strerror(errno));
     exit(EXIT_FAILURE);
   }
 
-  simulatedTimeShmId = shmget(simClockKey, sizeof(SimulatedClock), 0666);
-  if (simulatedTimeShmId == -1) {
-    simulatedTimeShmId =
-        shmget(simClockKey, sizeof(SimulatedClock), IPC_CREAT | 0666);
-    if (simulatedTimeShmId == -1) {
-      log_message(LOG_LEVEL_ERROR,
-                  "Failed to create Simulated Clock shared memory.");
-      exit(EXIT_FAILURE);
-    }
+  key_t simClockKey = ftok(SHM_PATH, SHM_PROJ_ID_SIM_CLOCK);
+  if (simClockKey == -1) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to generate key for Simulated Clock: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
   }
-  simClock = (SimulatedClock *)shmat(simulatedTimeShmId, NULL, 0);
+
+  key_t actualTimeKey = ftok(SHM_PATH, SHM_PROJ_ID_ACT_TIME);
+  if (actualTimeKey == -1) {
+    log_message(LOG_LEVEL_ERROR, "Failed to generate key for Actual Time: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  key_t processTableKey =
+      getSharedMemoryKey(SHM_PATH, SHM_PROJ_ID_PROCESS_TABLE);
+  processTableShmId = shmget(
+      processTableKey, DEFAULT_MAX_PROCESSES * sizeof(PCB), IPC_CREAT | 0666);
+  if (processTableShmId < 0) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to create shared memory for processTable: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  simulatedTimeShmId =
+      shmget(simClockKey, sizeof(SimulatedClock), IPC_CREAT | 0666);
+  if (simulatedTimeShmId < 0) {
+    log_message(
+        LOG_LEVEL_ERROR,
+        "Failed to create or open shared memory for Simulated Clock: %s",
+        strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  actualTimeShmId = shmget(actualTimeKey, sizeof(ActualTime), IPC_CREAT | 0666);
+  if (actualTimeShmId < 0) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to create or open shared memory for Actual Time: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  simClock = shmat(simulatedTimeShmId, NULL, 0);
   if (simClock == (void *)-1) {
     log_message(LOG_LEVEL_ERROR,
-                "Failed to attach to Simulated Clock shared memory.");
+                "Failed to attach to shared memory for Simulated Clock: %s",
+                strerror(errno));
     exit(EXIT_FAILURE);
   }
 
-  actualTimeShmId = shmget(actualTimeKey, sizeof(ActualTime), 0666);
-  if (actualTimeShmId == -1) {
-    actualTimeShmId =
-        shmget(actualTimeKey, sizeof(ActualTime), IPC_CREAT | 0666);
-    if (actualTimeShmId == -1) {
-      log_message(LOG_LEVEL_ERROR,
-                  "Failed to create Actual Time shared memory.");
-      exit(EXIT_FAILURE);
-    }
-  }
-  actualTime = (ActualTime *)shmat(actualTimeShmId, NULL, 0);
+  actualTime = shmat(actualTimeShmId, NULL, 0);
   if (actualTime == (void *)-1) {
     log_message(LOG_LEVEL_ERROR,
-                "Failed to attach to Actual Time shared memory.");
+                "Failed to attach to shared memory for Actual Time: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  processTable = (PCB *)shmat(processTableShmId, NULL, 0);
+  if (processTable == (void *)-1) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to attach to processTable shared memory: %s",
+                strerror(errno));
     exit(EXIT_FAILURE);
   }
 }

@@ -23,6 +23,7 @@
 #define SHM_PATH "/tmp"
 #define SHM_PROJ_ID_SIM_CLOCK 'S'
 #define SHM_PROJ_ID_ACT_TIME 'A'
+#define SHM_PROJ_ID_PROCESS_TABLE 'P'
 
 #define SEM_PERMISSIONS 0600
 
@@ -85,13 +86,16 @@ extern struct timeval startTime;
 extern struct timeval lastLogTime;
 extern SimulatedClock *simClock;
 extern ActualTime *actualTime;
-extern PCB processTable[DEFAULT_MAX_PROCESSES];
+
+extern PCB *processTable;
+
 extern FILE *logFile;
 extern char logFileName[256];
 
 extern int msqId;
 extern int simulatedTimeShmId;
 extern int actualTimeShmId;
+extern int processTableShmId;
 
 extern volatile sig_atomic_t keepRunning;
 extern volatile sig_atomic_t childTerminated;
@@ -109,20 +113,16 @@ extern pthread_mutex_t logMutex;
 
 int getCurrentChildren(void);
 void setCurrentChildren(int value);
-
-void log_message(int level, const char *format, ...);
-
-key_t getSharedMemoryKey(const char *path, int proj_id);
-void *attachSharedMemory(int shmId, const char *segmentName);
+void *attachSharedMemory(const char *path, int proj_id, size_t size,
+                         const char *segmentName);
 int detachSharedMemory(void **shmPtr, const char *segmentName);
-
+const char *processTypeToString(ProcessType type);
+void log_message(int level, const char *format, ...);
+key_t getSharedMemoryKey(const char *path, int proj_id);
 int initMessageQueue(void);
 int sendMessage(int msqId, Message *msg);
 int receiveMessage(int msqId, Message *msg, long msgType, int flags);
-
 void cleanupSharedResources(void);
-void prepareAndSendMessage(int msqId, pid_t pid, int message);
-
-void setupSharedMemory(void);
+void initializeSharedResources(void);
 
 #endif

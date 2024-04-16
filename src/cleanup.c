@@ -5,11 +5,24 @@
 
 volatile sig_atomic_t cleanupInitiated = 0;
 
-void initializeSemaphore(const char *semName) {
-  sem_unlink(semName);
-  clockSem = sem_open(semName, O_CREAT | O_EXCL, SEM_PERMISSIONS, 1);
+void initializeProcessTable(void) {
+  processTable = malloc(DEFAULT_MAX_PROCESSES * sizeof(PCB));
+  if (!processTable) {
+
+    perror("Failed to allocate memory for processTable");
+    exit(EXIT_FAILURE);
+  }
+
+  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
+    processTable[i].occupied = 0;
+  }
+}
+
+void semUnlinkCreate(void) {
+  sem_unlink(clockSemName);
+  clockSem = sem_open(clockSemName, O_CREAT | O_EXCL, SEM_PERMISSIONS, 1);
   if (clockSem == SEM_FAILED) {
-    log_message(LOG_LEVEL_ERROR, "Failed to initialize semaphore: %s",
+    log_message(LOG_LEVEL_ERROR, "Failed to create semaphore: %s",
                 strerror(errno));
     exit(EXIT_FAILURE);
   }
@@ -75,6 +88,7 @@ void cleanupSharedMemorySegment(int shmId, const char *segmentName) {
 void sharedMemory_cleanup(void) {
   cleanupSharedMemorySegment(simulatedTimeShmId, "Simulated Clock");
   cleanupSharedMemorySegment(actualTimeShmId, "Actual Time");
+  cleanupSharedMemorySegment(processTableShmId, "Process Table");
 }
 
 int messageQueue_cleanup(void) {
@@ -89,8 +103,26 @@ int messageQueue_cleanup(void) {
 }
 
 void killAllWorkers(void) {
-  log_message(LOG_LEVEL_INFO,
-              "Sending termination signals to all worker processes.");
+  log_message(LOG_LEVEL_INFO, "Sending termination signals to all processes.");
+
+  if (timekeeperPid > 0) {
+    kill(timekeeperPid, SIGTERM);
+    int status;
+    waitpid(timekeeperPid, &status, 0);
+    log_message(LOG_LEVEL_DEBUG,
+                "Termination signal sent and Timekeeper PID: %d exited.",
+                timekeeperPid);
+  }
+
+  if (tableprinterPid > 0) {
+    kill(tableprinterPid, SIGTERM);
+    int status;
+    waitpid(tableprinterPid, &status, 0);
+    log_message(LOG_LEVEL_DEBUG,
+                "Termination signal sent and TablePrinter PID: %d exited.",
+                tableprinterPid);
+  }
+
   Message msg = {.mtype = 1, .mtext = 0};
   for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
     if (processTable[i].occupied) {
@@ -114,6 +146,7 @@ void killAllWorkers(void) {
 void timeoutHandler(int signum) {
   (void)signum;
   log_message(LOG_LEVEL_INFO, "Timeout signal received.");
+  keepRunning = 0;
   cleanupAndExit();
 }
 
@@ -132,34 +165,65 @@ void cleanupAndExit(void) {
   _exit(EXIT_SUCCESS);
 }
 
-int initSharedMemorySegment(key_t key, size_t size, const char *segmentName) {
+pid_t forkAndExecute(const char *executable) {
+  pid_t pid = fork();
+  if (pid == 0) {
 
-  int shmId = shmget(key, size, IPC_CREAT | 0666);
-  if (shmId < 0) {
+    execl(executable, executable, (char *)NULL);
 
-    if (errno == EEXIST) {
+    log_message(LOG_LEVEL_ERROR, "Failed to start process '%s': %s", executable,
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  } else if (pid < 0) {
 
-      shmId = shmget(key, size, 0666);
-      if (shmId < 0) {
-        log_message(LOG_LEVEL_ERROR,
-                    "Failed to attach to existing shared memory for %s: %s",
-                    segmentName, strerror(errno));
-        return -1;
-      }
-      log_message(
-          LOG_LEVEL_INFO,
-          "Shared memory for %s already exists, attached to existing shmId: %d",
-          segmentName, shmId);
-    } else {
-      log_message(LOG_LEVEL_ERROR, "Failed to create shared memory for %s: %s",
-                  segmentName, strerror(errno));
-      return -1;
-    }
-  } else {
-    log_message(LOG_LEVEL_INFO,
-                "Created new shared memory for %s with shmId: %d", segmentName,
-                shmId);
+    log_message(LOG_LEVEL_ERROR, "Failed to fork process for '%s': %s",
+                executable, strerror(errno));
   }
 
-  return shmId;
+  return pid;
+}
+
+void parentSignalHandler(int sig) {
+  char buffer[256];
+  switch (sig) {
+  case SIGINT:
+  case SIGTERM:
+    snprintf(buffer, sizeof(buffer),
+             "OSS (PID: %d): Shutdown requested by signal %d.", getpid(), sig);
+    signalSafeLog(buffer);
+    keepRunning = 0;
+    break;
+  case SIGALRM:
+    snprintf(buffer, sizeof(buffer), "OSS (PID: %d): Timer expired.", getpid());
+    signalSafeLog(buffer);
+    keepRunning = 0;
+    break;
+  case SIGCHLD:
+    while (waitpid(-1, NULL, WNOHANG) > 0) {
+    }
+    snprintf(buffer, sizeof(buffer), "OSS (PID: %d): Child process terminated.",
+             getpid());
+    signalSafeLog(buffer);
+    break;
+  default:
+    snprintf(buffer, sizeof(buffer),
+             "OSS (PID: %d): Unhandled signal %d received.", getpid(), sig);
+    signalSafeLog(buffer);
+    break;
+  }
+}
+
+void setupParentSignalHandlers(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = parentSignalHandler;
+  sigfillset(&sa.sa_mask);
+
+  int signals[] = {SIGINT, SIGTERM, SIGALRM, SIGCHLD};
+  for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); ++i) {
+    if (sigaction(signals[i], &sa, NULL) == -1) {
+      signalSafeLog("Error setting up parent signal handler. Exiting.");
+      _exit(EXIT_FAILURE);
+    }
+  }
 }

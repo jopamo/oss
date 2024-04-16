@@ -5,15 +5,12 @@
 #include "shared.h"
 
 void runTimekeeper(void) {
-  setupSharedMemory();
+  gProcessType = PROCESS_TYPE_TIMEKEEPER;
 
-  setupSignalHandlers(getpid());
+  initializeSharedResources();
+  msqId = initMessageQueue();
 
   log_message(LOG_LEVEL_INFO, "Starting timekeeping service.");
-
-  simClock = (SimulatedClock *)attachSharedMemory(simulatedTimeShmId,
-                                                  "Simulated Clock");
-  actualTime = (ActualTime *)attachSharedMemory(actualTimeShmId, "Actual Time");
 
   if (!simClock || !actualTime) {
     log_message(LOG_LEVEL_ERROR, "Failed to attach to shared memory segments.");
@@ -24,13 +21,6 @@ void runTimekeeper(void) {
     simClock->seconds = 0;
     simClock->nanoseconds = 0;
     simClock->initialized = 1;
-  }
-
-  clockSem = sem_open(clockSemName, O_CREAT, SEM_PERMISSIONS, 1);
-  if (clockSem == SEM_FAILED) {
-    log_message(LOG_LEVEL_ERROR, "Failed to open or create semaphore: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
   }
 
   double simSpeedFactor = 0.28;
@@ -70,10 +60,6 @@ void runTimekeeper(void) {
       log_message(LOG_LEVEL_ERROR, "Failed to lock semaphore: %s",
                   strerror(errno));
     }
-
-    if (actualTime->seconds >= MAX_RUNTIME) {
-      keepRunning = 0;
-    }
   }
 
   log_message(LOG_LEVEL_INFO, "Timekeeping service ending.");
@@ -82,7 +68,7 @@ void runTimekeeper(void) {
 int main(void) {
   gProcessType = PROCESS_TYPE_TIMEKEEPER;
 
-  setupSignalHandlers(getpid());
+  setupSignalHandlers();
   runTimekeeper();
 
   cleanupSharedResources();

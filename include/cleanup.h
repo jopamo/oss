@@ -1,22 +1,27 @@
 #ifndef CLEANUP_H
 #define CLEANUP_H
 
-#include <sys/ipc.h>
-#include <sys/shm.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include "shared.h"
 
-void initializeSemaphore(const char *semName);
-int initSharedMemorySegment(key_t key, size_t size, const char *segmentName);
+extern volatile sig_atomic_t cleanupInitiated;
+
+void initializeProcessTable(void);
+void semUnlinkCreate(void);
+void atexitHandler(void);
 void cleanupResources(void);
 void semaphore_cleanup(void);
 void logFile_cleanup(void);
-void killAllWorkers(void);
-void sharedMemory_cleanup(void);
 void cleanupSharedMemorySegment(int shmId, const char *segmentName);
+void sharedMemory_cleanup(void);
 int messageQueue_cleanup(void);
+void killAllWorkers(void);
+void timeoutHandler(int signum);
 void setupTimeout(int seconds);
+
+void parentSignalHandler(int sig);
+void setupParentSignalHandlers(void);
+
 void cleanupAndExit(void);
-void atexitHandler(void);
+pid_t forkAndExecute(const char *executable);
 
 #endif

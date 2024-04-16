@@ -5,7 +5,12 @@
 #include <stdio.h>
 #include <unistd.h>
 
-void setupSignalHandlers(pid_t pid);
-void genericSignalHandler(int sig);
+extern pid_t timekeeperPid;
+extern pid_t tableprinterPid;
+extern pid_t parentPid;
+
+void setupSignalHandlers(void);
+void waitForChildProcesses(void);
+void signalSafeLog(const char *msg);
 
 #endif
