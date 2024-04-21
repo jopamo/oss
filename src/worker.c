@@ -15,6 +15,8 @@ void normalizeTime(unsigned long *seconds, unsigned long *nanoseconds);
 void sendStatusMessage(int msqId, pid_t pid, int status);
 
 int main(int argc, char *argv[]) {
+  gProcessType = PROCESS_TYPE_WORKER;
+
   if (argc != 3) {
     fprintf(stderr, "Usage: %s <lifespan seconds> <lifespan nanoseconds>\n",
             argv[0]);
@@ -22,6 +24,7 @@ int main(int argc, char *argv[]) {
   }
 
   initializeSharedResources();
+  msqId = initMessageQueue();
   setupSignalHandlers();
 
   unsigned long lifespanSeconds = strtoul(argv[1], NULL, 10);

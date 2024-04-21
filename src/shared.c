@@ -150,44 +150,64 @@ int initMessageQueue(void) {
 }
 
 int sendMessage(int msqId, Message *msg) {
-  if (msgsnd(msqId, msg, sizeof(*msg) - sizeof(long), 0) == -1) {
+
+  log_message(
+      LOG_LEVEL_DEBUG,
+      "[SEND] Attempting to send message. msqId: %d, Type: %ld, Content: %d",
+      msqId, msg->mtype, msg->mtext);
+
+  size_t messageSize = sizeof(*msg) - sizeof(long);
+  if (msgsnd(msqId, msg, messageSize, 0) == -1) {
+
     log_message(LOG_LEVEL_ERROR,
-                "[SEND] Error: Failed to send message. Type: %ld, Error: %s",
-                msg->mtype, strerror(errno));
+                "[SEND] Error: Failed to send message. msqId: %d, Type: %ld, "
+                "Content: %d, Error: %s (%d)",
+                msqId, msg->mtype, msg->mtext, strerror(errno), errno);
     return -1;
-  } else {
-    log_message(LOG_LEVEL_INFO,
-                "[SEND] Success: Message sent. Type: %ld, Content: %d",
-                msg->mtype, msg->mtext);
-    return 0;
   }
+
+  log_message(LOG_LEVEL_INFO,
+              "[SEND] Success: Message sent. msqId: %d, Type: %ld, Content: %d",
+              msqId, msg->mtype, msg->mtext);
+  return 0;
 }
 
 int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
+  log_message(LOG_LEVEL_DEBUG,
+              "[RECEIVE] Attempting to receive message. msqId: %d, Expected "
+              "Type: %ld, Flags: %d",
+              msqId, msgType, flags);
+
   while (keepRunning) {
     ssize_t result =
         msgrcv(msqId, msg, sizeof(*msg) - sizeof(long), msgType, flags);
+
     if (result == -1) {
       if (errno == EINTR) {
 
+        log_message(
+            LOG_LEVEL_INFO,
+            "[RECEIVE] Interrupted by signal, checking if should terminate.");
         if (!keepRunning) {
           log_message(LOG_LEVEL_INFO,
-                      "[RECEIVE] Interrupted by signal, terminating.");
+                      "[RECEIVE] Terminating due to signal interruption.");
           break;
         }
-
         continue;
       } else {
+
         log_message(LOG_LEVEL_ERROR,
-                    "[RECEIVE] Error: Failed to receive message. Expected "
-                    "Type: %ld, Error: %s",
-                    msgType, strerror(errno));
+                    "[RECEIVE] Error: Failed to receive message. msqId: %d, "
+                    "Expected Type: %ld, Error: %s (%d)",
+                    msqId, msgType, strerror(errno), errno);
         return -1;
       }
     } else {
+
       log_message(LOG_LEVEL_INFO,
-                  "[RECEIVE] Success: Message received. Type: %ld, Content: %d",
-                  msg->mtype, msg->mtext);
+                  "[RECEIVE] Success: Message received. msqId: %d, Type: %ld, "
+                  "Content: %d",
+                  msqId, msg->mtype, msg->mtext);
       return 0;
     }
   }
