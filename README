@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Operating System Simulator (OSS) is designed to simulate an operating system's process scheduling and inter-process communication using shared memory. This simulation includes a "simulated system clock" and a process table consisting of Process Control Blocks (PCBs) for each process. The OSS manages launching worker processes (`worker`) with specific lifetimes and ensures synchronization using message queues and shared memory.
+The Operating System Simulator (OSS) is designed to simulate an operating system's process scheduling and inter-process communication using shared memory. This simulation includes a "simulated system clock" and a process table consisting of Process Control Blocks (PCBs) for each process. The OSS manages launching worker processes (`worker`) with specific lifetimes and ensures synchronization using message queues, shared memory, Multi-Level Feedback Queue (MLFQ), Process Blocking, and Enhanced Time Management.
 
 ## Quick Start Guide 🚀
 
