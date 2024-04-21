@@ -50,6 +50,14 @@
 
 #define LOG_BUFFER_SIZE 1024
 
+#define QUEUE_COUNT 3
+#define MAX_PROCESSES 20
+#define TIME_QUANTUM_BASE 10
+
+#define MESSAGE_TYPE_SCHEDULE 1
+#define MESSAGE_TYPE_TERMINATE 2
+#define MESSAGE_TYPE_BLOCKED 3
+
 typedef struct {
   unsigned int lifespanSeconds;
   unsigned int lifespanNanoSeconds;
@@ -64,14 +72,35 @@ typedef struct {
 typedef struct {
   long mtype;
   int mtext;
+  unsigned long usedTime;
 } Message;
 
-typedef struct {
+typedef struct PCB {
   int occupied;
   pid_t pid;
-  unsigned int startSeconds;
-  unsigned int startNano;
+  int startSeconds;
+  int startNano;
+  int blocked;
+  int eventBlockedUntilSec;
+  int eventBlockedUntilNano;
 } PCB;
+
+typedef struct {
+  pid_t *queue;
+  int front, rear;
+  int capacity;
+} Queue;
+
+typedef struct {
+  Queue highPriority;
+  Queue midPriority;
+  Queue lowPriority;
+} MLFQ;
+
+extern MLFQ mlfq;
+
+extern PCB *processTable;
+extern Queue queues[QUEUE_COUNT];
 
 typedef enum {
   PROCESS_TYPE_OSS,
@@ -86,8 +115,6 @@ extern struct timeval startTime;
 extern struct timeval lastLogTime;
 extern SimulatedClock *simClock;
 extern ActualTime *actualTime;
-
-extern PCB *processTable;
 
 extern FILE *logFile;
 extern char logFileName[256];

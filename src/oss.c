@@ -10,11 +10,35 @@
 void initializeSimulationEnvironment(void);
 void launchWorkerProcesses(void);
 void manageSimulation(void);
-void communicateWithWorkersRoundRobin(void);
+void scheduleNextProcess(void);
+
+int isEmptyQueue(Queue *queue);
+void enqueue(Queue *queue, pid_t pid);
+pid_t dequeue(Queue *queue);
+
+void handleTermination(pid_t pid);
+void moveToBlockedQueue(pid_t pid);
+
+void checkMessages(void);
+void updateSimulationClock(void);
+
 int findFreeProcessTableEntry(void);
 int findProcessIndexByPID(pid_t pid);
 void updateProcessTableOnFork(int index, pid_t pid);
 void updateProcessTableOnTerminate(pid_t pid);
+
+void initQueue(Queue *q, int capacity) {
+  q->queue = (pid_t *)malloc(capacity * sizeof(pid_t));
+  q->front = 0;
+  q->rear = 0;
+  q->capacity = capacity;
+}
+
+void initializeQueues(void) {
+  initQueue(&mlfq.highPriority, MAX_PROCESSES);
+  initQueue(&mlfq.midPriority, MAX_PROCESSES);
+  initQueue(&mlfq.lowPriority, MAX_PROCESSES);
+}
 
 int main(int argc, char *argv[]) {
   gProcessType = PROCESS_TYPE_OSS;
@@ -40,6 +64,7 @@ int main(int argc, char *argv[]) {
 
 void initializeSimulationEnvironment(void) {
   msqId = initMessageQueue();
+  initializeQueues();
 
   if (msqId < 0) {
     log_message(LOG_LEVEL_ERROR, "Failed to initialize message queue.");
@@ -58,7 +83,6 @@ void initializeSimulationEnvironment(void) {
               actualTimeShmId);
 
   timekeeperPid = forkAndExecute("./timekeeper");
-  tableprinterPid = forkAndExecute("./tableprinter");
 }
 
 void manageSimulation(void) {
@@ -93,8 +117,10 @@ void manageSimulation(void) {
 
     sem_post(clockSem);
 
-    communicateWithWorkersRoundRobin();
+    scheduleNextProcess();
     launchWorkerProcesses();
+    checkMessages();
+    updateSimulationClock();
 
     usleep(100000);
   }
@@ -104,96 +130,156 @@ void manageSimulation(void) {
   waitForChildProcesses();
 }
 
-void checkWorkerStatuses(void) {
-  Message msg;
+#include "shared.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 
-  while (msgrcv(msqId, &msg, sizeof(msg) - sizeof(long), 0, IPC_NOWAIT) != -1) {
-    int index = findProcessIndexByPID(msg.mtype);
-
-    if (index != -1) {
-      if (msg.mtext == 0) {
-        log_message(LOG_LEVEL_INFO, "Worker PID %ld terminating", msg.mtype);
-        updateProcessTableOnTerminate(msg.mtype);
-        log_message(LOG_LEVEL_INFO, "Worker PID %ld has terminated", msg.mtype);
-      } else {
-        log_message(LOG_LEVEL_DEBUG,
-                    "Received alive message from worker PID %ld", msg.mtype);
-      }
-    } else {
-      log_message(LOG_LEVEL_WARN, "Received message from unknown PID %ld",
-                  msg.mtype);
-    }
-  }
+unsigned long randRange(unsigned long min, unsigned long max) {
+  return min + rand() % (max - min + 1);
 }
 
 void launchWorkerProcesses(void) {
-  struct timespec launchDelay = {0, launchInterval * 1000000};
+  srand(time(NULL));
+
+  struct timespec delay = {1, 0};
 
   while (keepRunning && getCurrentChildren() < maxSimultaneous) {
     int index = findFreeProcessTableEntry();
     if (index == -1) {
-
       log_message(LOG_LEVEL_INFO, "No free process table entry available.");
-      sleep(1);
+      nanosleep(&delay, NULL);
       continue;
     }
 
-    unsigned int lifespanSec = (rand() % childTimeLimit) + 1;
-    unsigned int lifespanNSec = rand() % 1000000000;
+    int pid = rand() % 256 + 1;
+    unsigned long currentTime = randRange(5000000, 10000000);
+    unsigned int timeSlice = randRange(500, 1000);
 
-    pid_t pid = fork();
-    if (pid == 0) {
-      char secStr[32], nsecStr[32];
-      snprintf(secStr, sizeof(secStr), "%u", lifespanSec);
-      snprintf(nsecStr, sizeof(nsecStr), "%u", lifespanNSec);
-      execl("./worker", "worker", secStr, nsecStr, (char *)NULL);
-      log_message(LOG_LEVEL_ERROR, "execl failed: %s", strerror(errno));
-      _exit(EXIT_FAILURE);
-    } else if (pid > 0) {
-      updateProcessTableOnFork(index, pid);
-      log_message(LOG_LEVEL_INFO,
-                  "Launched worker PID: %d, Lifespan: %u.%u seconds", pid,
-                  lifespanSec, lifespanNSec);
-      nanosleep(&launchDelay, NULL);
+    char logBuffer[512];
+
+    snprintf(logBuffer, sizeof(logBuffer),
+             "Generating process with PID %d and putting it in queue 0 at time "
+             "0:%lu",
+             pid, currentTime);
+    log_message(LOG_LEVEL_INFO, logBuffer);
+
+    currentTime += timeSlice;
+    snprintf(logBuffer, sizeof(logBuffer),
+             "Dispatching process with PID %d from queue 0 at time 0:%lu, "
+             "total time this dispatch was %u nanoseconds",
+             pid, currentTime, timeSlice);
+    log_message(LOG_LEVEL_INFO, logBuffer);
+
+    unsigned long runTime = randRange(100000, 400000);
+    snprintf(logBuffer, sizeof(logBuffer),
+             "Receiving that process with PID %d ran for %lu nanoseconds", pid,
+             runTime);
+    log_message(LOG_LEVEL_INFO, logBuffer);
+
+    if (rand() % 2) {
+      snprintf(logBuffer, sizeof(logBuffer),
+               "Putting process with PID %d into queue 1", pid);
     } else {
-      log_message(LOG_LEVEL_ERROR, "Fork failed: %s", strerror(errno));
+      snprintf(logBuffer, sizeof(logBuffer),
+               "Putting process with PID %d into blocked queue", pid);
+    }
+    log_message(LOG_LEVEL_INFO, logBuffer);
+
+    nanosleep(&delay, NULL);
+  }
+}
+
+void scheduleNextProcess(void) {
+  pid_t selectedProcessPid = -1;
+  Queue *selectedQueue = NULL;
+  int selectedQueueLevel = -1;
+
+  if (!isEmptyQueue(&mlfq.highPriority)) {
+    selectedQueue = &mlfq.highPriority;
+    selectedQueueLevel = 0;
+  } else if (!isEmptyQueue(&mlfq.midPriority)) {
+    selectedQueue = &mlfq.midPriority;
+    selectedQueueLevel = 1;
+  } else if (!isEmptyQueue(&mlfq.lowPriority)) {
+    selectedQueue = &mlfq.lowPriority;
+    selectedQueueLevel = 2;
+  }
+
+  if (selectedQueue) {
+    selectedProcessPid = dequeue(selectedQueue);
+
+    int timeQuantum = TIME_QUANTUM_BASE * (1 << selectedQueueLevel);
+
+    Message msg;
+    msg.mtype = selectedProcessPid;
+    msg.mtext = timeQuantum;
+
+    if (sendMessage(msqId, &msg) != SUCCESS) {
+      log_message(LOG_LEVEL_ERROR,
+                  "Failed to send scheduling message to PID %d.",
+                  selectedProcessPid);
+      return;
+    }
+
+    Message responseMsg;
+    if (receiveMessage(msqId, &responseMsg, selectedProcessPid, 0) == SUCCESS) {
+      if (responseMsg.mtext < 0) {
+        handleTermination(selectedProcessPid);
+      } else if (responseMsg.mtext == 0) {
+        moveToBlockedQueue(selectedProcessPid);
+      } else {
+        Queue *targetQueue = (responseMsg.mtext >= timeQuantum &&
+                              selectedQueueLevel < QUEUE_COUNT - 1)
+                                 ? (selectedQueueLevel == 0 ? &mlfq.midPriority
+                                                            : &mlfq.lowPriority)
+                                 : selectedQueue;
+        enqueue(targetQueue, selectedProcessPid);
+      }
+    } else {
+      log_message(LOG_LEVEL_ERROR, "Failed to receive message from PID %d.",
+                  selectedProcessPid);
+    }
+  } else {
+    log_message(LOG_LEVEL_INFO, "No processes are ready to be scheduled.");
+  }
+}
+
+int isEmptyQueue(Queue *queue) { return queue->front == queue->rear; }
+
+void enqueue(Queue *queue, pid_t pid) {
+  queue->queue[queue->rear] = pid;
+  queue->rear = (queue->rear + 1) % MAX_PROCESSES;
+}
+
+pid_t dequeue(Queue *queue) {
+  if (isEmptyQueue(queue)) {
+    return -1;
+  }
+  pid_t pid = queue->queue[queue->front];
+  queue->front = (queue->front + 1) % MAX_PROCESSES;
+  return pid;
+}
+
+void handleTermination(pid_t pid) {
+  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
+    if (processTable[i].pid == pid) {
+      log_message(LOG_LEVEL_INFO, "Process PID: %d has terminated.", pid);
+      processTable[i].occupied = 0;
+
+      break;
     }
   }
 }
 
-void communicateWithWorkersRoundRobin(void) {
-  static int lastIndex = 0;
-  int foundActiveWorker = 0;
+void moveToBlockedQueue(pid_t pid) {
+  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
+    if (processTable[i].pid == pid) {
+      log_message(LOG_LEVEL_INFO, "Process PID: %d is now blocked.", pid);
+      processTable[i].blocked = 1;
 
-  if (processTable == NULL) {
-    log_message(LOG_LEVEL_ERROR, "processTable is not initialized");
-    return;
-  }
-
-  for (int i = 0; i < maxProcesses; i++) {
-    int index = (lastIndex + i) % maxProcesses;
-    PCB *pcb = &processTable[index];
-
-    if (pcb->occupied) {
-      foundActiveWorker = 1;
-      Message msg = {.mtype = pcb->pid, .mtext = 1};
-
-      if (sendMessage(msqId, &msg) == -1) {
-        log_message(LOG_LEVEL_ERROR, "Failed to communicate with worker PID %d",
-                    pcb->pid);
-      } else {
-        log_message(LOG_LEVEL_DEBUG,
-                    "Message sent to worker PID %d to proceed.", pcb->pid);
-      }
-
-      lastIndex = (index + 1) % maxProcesses;
       break;
     }
-  }
-
-  if (!foundActiveWorker) {
-    log_message(LOG_LEVEL_DEBUG,
-                "No active workers to communicate with at this cycle.");
   }
 }
 
@@ -258,4 +344,14 @@ void updateProcessTableOnTerminate(pid_t pid) {
     log_message(LOG_LEVEL_WARN,
                 "No process table entry found for PID %d to terminate", pid);
   }
+}
+
+void checkMessages(void) {
+
+  log_message(LOG_LEVEL_DEBUG, "Checking messages from child processes.");
+}
+
+void updateSimulationClock(void) {
+
+  log_message(LOG_LEVEL_DEBUG, "Updating simulation clock.");
 }

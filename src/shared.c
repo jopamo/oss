@@ -9,6 +9,8 @@ ActualTime *actualTime = NULL;
 
 PCB *processTable;
 
+MLFQ mlfq;
+
 FILE *logFile = NULL;
 char logFileName[256] = DEFAULT_LOG_FILE_NAME;
 
@@ -28,7 +30,7 @@ int launchInterval = DEFAULT_LAUNCH_INTERVAL;
 
 int currentChildren = 0;
 
-int currentLogLevel = LOG_LEVEL_DEBUG;
+int currentLogLevel = LOG_LEVEL_INFO;
 
 sem_t *clockSem = SEM_FAILED;
 const char *clockSemName = "/simClockSem";
@@ -150,7 +152,6 @@ int initMessageQueue(void) {
 }
 
 int sendMessage(int msqId, Message *msg) {
-
   log_message(
       LOG_LEVEL_DEBUG,
       "[SEND] Attempting to send message. msqId: %d, Type: %ld, Content: %d",
@@ -158,7 +159,6 @@ int sendMessage(int msqId, Message *msg) {
 
   size_t messageSize = sizeof(*msg) - sizeof(long);
   if (msgsnd(msqId, msg, messageSize, 0) == -1) {
-
     log_message(LOG_LEVEL_ERROR,
                 "[SEND] Error: Failed to send message. msqId: %d, Type: %ld, "
                 "Content: %d, Error: %s (%d)",
@@ -184,7 +184,6 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
 
     if (result == -1) {
       if (errno == EINTR) {
-
         log_message(
             LOG_LEVEL_INFO,
             "[RECEIVE] Interrupted by signal, checking if should terminate.");
@@ -195,7 +194,6 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
         }
         continue;
       } else {
-
         log_message(LOG_LEVEL_ERROR,
                     "[RECEIVE] Error: Failed to receive message. msqId: %d, "
                     "Expected Type: %ld, Error: %s (%d)",
@@ -203,7 +201,6 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
         return -1;
       }
     } else {
-
       log_message(LOG_LEVEL_INFO,
                   "[RECEIVE] Success: Message received. msqId: %d, Type: %ld, "
                   "Content: %d",
