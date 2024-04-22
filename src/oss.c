@@ -83,6 +83,8 @@ void initializeSimulationEnvironment(void) {
               actualTimeShmId);
 
   timekeeperPid = forkAndExecute("./timekeeper");
+  tableprinterPid = forkAndExecute("./tableprinter");
+
 }
 
 void manageSimulation(void) {
@@ -140,53 +142,37 @@ unsigned long randRange(unsigned long min, unsigned long max) {
 }
 
 void launchWorkerProcesses(void) {
-  srand(time(NULL));
-
-  struct timespec delay = {1, 0};
+  struct timespec launchDelay = {0, launchInterval * 1000000};
 
   while (keepRunning && getCurrentChildren() < maxSimultaneous) {
     int index = findFreeProcessTableEntry();
     if (index == -1) {
+
       log_message(LOG_LEVEL_INFO, "No free process table entry available.");
-      nanosleep(&delay, NULL);
+      sleep(1);
       continue;
     }
 
-    int pid = rand() % 256 + 1;
-    unsigned long currentTime = randRange(5000000, 10000000);
-    unsigned int timeSlice = randRange(500, 1000);
+    unsigned int lifespanSec = (rand() % childTimeLimit) + 1;
+    unsigned int lifespanNSec = rand() % 1000000000;
 
-    char logBuffer[512];
-
-    snprintf(logBuffer, sizeof(logBuffer),
-             "Generating process with PID %d and putting it in queue 0 at time "
-             "0:%lu",
-             pid, currentTime);
-    log_message(LOG_LEVEL_INFO, logBuffer);
-
-    currentTime += timeSlice;
-    snprintf(logBuffer, sizeof(logBuffer),
-             "Dispatching process with PID %d from queue 0 at time 0:%lu, "
-             "total time this dispatch was %u nanoseconds",
-             pid, currentTime, timeSlice);
-    log_message(LOG_LEVEL_INFO, logBuffer);
-
-    unsigned long runTime = randRange(100000, 400000);
-    snprintf(logBuffer, sizeof(logBuffer),
-             "Receiving that process with PID %d ran for %lu nanoseconds", pid,
-             runTime);
-    log_message(LOG_LEVEL_INFO, logBuffer);
-
-    if (rand() % 2) {
-      snprintf(logBuffer, sizeof(logBuffer),
-               "Putting process with PID %d into queue 1", pid);
+    pid_t pid = fork();
+    if (pid == 0) {
+      char secStr[32], nsecStr[32];
+      snprintf(secStr, sizeof(secStr), "%u", lifespanSec);
+      snprintf(nsecStr, sizeof(nsecStr), "%u", lifespanNSec);
+      execl("./worker", "worker", secStr, nsecStr, (char *)NULL);
+      log_message(LOG_LEVEL_ERROR, "execl failed: %s", strerror(errno));
+      _exit(EXIT_FAILURE);
+    } else if (pid > 0) {
+      updateProcessTableOnFork(index, pid);
+      log_message(LOG_LEVEL_INFO,
+                  "Launched worker PID: %d, Lifespan: %u.%u seconds", pid,
+                  lifespanSec, lifespanNSec);
+      nanosleep(&launchDelay, NULL);
     } else {
-      snprintf(logBuffer, sizeof(logBuffer),
-               "Putting process with PID %d into blocked queue", pid);
+      log_message(LOG_LEVEL_ERROR, "Fork failed: %s", strerror(errno));
     }
-    log_message(LOG_LEVEL_INFO, logBuffer);
-
-    nanosleep(&delay, NULL);
   }
 }
 
