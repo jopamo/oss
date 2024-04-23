@@ -38,7 +38,6 @@ void logProcessTable(void) {
 int main(void) {
   setupSignalHandlers();
   initializeSharedResources();
-  msqId = initMessageQueue();
 
   while (keepRunning) {
     logProcessTable();

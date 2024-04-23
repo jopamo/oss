@@ -17,6 +17,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define MAX_RESOURCES 10
+#define INSTANCES_PER_RESOURCE 20
+#define MAX_USER_PROCESSES 18
+
 #define MSG_PATH "/tmp"
 #define MSG_PROJ_ID 'a'
 
@@ -24,6 +28,8 @@
 #define SHM_PROJ_ID_SIM_CLOCK 'S'
 #define SHM_PROJ_ID_ACT_TIME 'A'
 #define SHM_PROJ_ID_PROCESS_TABLE 'P'
+#define SHM_PROJ_ID_RESOURCE_TABLE 'R'
+#define SHM_PROJ_ID_DEADLOCK 'D'
 
 #define SEM_PERMISSIONS 0600
 
@@ -57,6 +63,12 @@
 #define MESSAGE_TYPE_SCHEDULE 1
 #define MESSAGE_TYPE_TERMINATE 2
 #define MESSAGE_TYPE_BLOCKED 3
+
+typedef struct {
+  int total[INSTANCES_PER_RESOURCE];
+  int available[INSTANCES_PER_RESOURCE];
+  int allocated[MAX_USER_PROCESSES][INSTANCES_PER_RESOURCE];
+} ResourceDescriptor;
 
 typedef struct {
   unsigned int lifespanSeconds;
@@ -123,6 +135,7 @@ extern int msqId;
 extern int simulatedTimeShmId;
 extern int actualTimeShmId;
 extern int processTableShmId;
+extern int resourceTableShmId;
 
 extern volatile sig_atomic_t keepRunning;
 extern volatile sig_atomic_t childTerminated;
@@ -137,19 +150,30 @@ extern sem_t *clockSem;
 extern const char *clockSemName;
 
 extern pthread_mutex_t logMutex;
+extern pthread_mutex_t resourceTableMutex;
+
+extern ResourceDescriptor *resourceTable;
 
 int getCurrentChildren(void);
 void setCurrentChildren(int value);
+
+void initializeSemaphore(void);
+void initializeSimulatedClock(void);
+void initializeActualTime(void);
+void initializeProcessTable(void);
+void initializeResourceTable(void);
+void initializeSharedResources(void);
+void cleanupSharedResources(void);
+void initializeResourceDescriptors(ResourceDescriptor *rd);
+int requestResource(int resourceType, int quantity, int pid);
+int releaseResource(int resourceType, int quantity, int pid);
 void *attachSharedMemory(const char *path, int proj_id, size_t size,
                          const char *segmentName);
 int detachSharedMemory(void **shmPtr, const char *segmentName);
-const char *processTypeToString(ProcessType type);
 void log_message(int level, const char *format, ...);
 key_t getSharedMemoryKey(const char *path, int proj_id);
 int initMessageQueue(void);
 int sendMessage(int msqId, Message *msg);
 int receiveMessage(int msqId, Message *msg, long msgType, int flags);
-void cleanupSharedResources(void);
-void initializeSharedResources(void);
 
 #endif

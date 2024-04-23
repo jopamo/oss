@@ -19,6 +19,10 @@ int msqId = -1;
 int simulatedTimeShmId = -1;
 int actualTimeShmId = -1;
 int processTableShmId = -1;
+int resourceTableShmId = -1;
+int deadlockShmId = -1;
+
+ResourceDescriptor *resourceTable = NULL;
 
 volatile sig_atomic_t childTerminated = 0;
 volatile sig_atomic_t keepRunning = 1;
@@ -36,6 +40,7 @@ sem_t *clockSem = SEM_FAILED;
 const char *clockSemName = "/simClockSem";
 
 pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t resourceTableMutex = PTHREAD_MUTEX_INITIALIZER;
 
 int getCurrentChildren(void) { return currentChildren; }
 void setCurrentChildren(int value) { currentChildren = value; }
@@ -228,36 +233,20 @@ void cleanupSharedResources(void) {
   }
 }
 
-void initializeSharedResources(void) {
+void initializeSemaphore(void) {
   clockSem = sem_open(clockSemName, 0);
   if (clockSem == SEM_FAILED) {
     log_message(LOG_LEVEL_ERROR, "Failed to create or open semaphore: %s",
                 strerror(errno));
     exit(EXIT_FAILURE);
   }
+}
 
+void initializeSimulatedClock(void) {
   key_t simClockKey = ftok(SHM_PATH, SHM_PROJ_ID_SIM_CLOCK);
   if (simClockKey == -1) {
     log_message(LOG_LEVEL_ERROR,
                 "Failed to generate key for Simulated Clock: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
-  key_t actualTimeKey = ftok(SHM_PATH, SHM_PROJ_ID_ACT_TIME);
-  if (actualTimeKey == -1) {
-    log_message(LOG_LEVEL_ERROR, "Failed to generate key for Actual Time: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
-  key_t processTableKey =
-      getSharedMemoryKey(SHM_PATH, SHM_PROJ_ID_PROCESS_TABLE);
-  processTableShmId = shmget(
-      processTableKey, DEFAULT_MAX_PROCESSES * sizeof(PCB), IPC_CREAT | 0666);
-  if (processTableShmId < 0) {
-    log_message(LOG_LEVEL_ERROR,
-                "Failed to create shared memory for processTable: %s",
                 strerror(errno));
     exit(EXIT_FAILURE);
   }
@@ -272,18 +261,27 @@ void initializeSharedResources(void) {
     exit(EXIT_FAILURE);
   }
 
-  actualTimeShmId = shmget(actualTimeKey, sizeof(ActualTime), IPC_CREAT | 0666);
-  if (actualTimeShmId < 0) {
-    log_message(LOG_LEVEL_ERROR,
-                "Failed to create or open shared memory for Actual Time: %s",
-                strerror(errno));
-    exit(EXIT_FAILURE);
-  }
-
   simClock = shmat(simulatedTimeShmId, NULL, 0);
   if (simClock == (void *)-1) {
     log_message(LOG_LEVEL_ERROR,
                 "Failed to attach to shared memory for Simulated Clock: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+}
+
+void initializeActualTime(void) {
+  key_t actualTimeKey = ftok(SHM_PATH, SHM_PROJ_ID_ACT_TIME);
+  if (actualTimeKey == -1) {
+    log_message(LOG_LEVEL_ERROR, "Failed to generate key for Actual Time: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  actualTimeShmId = shmget(actualTimeKey, sizeof(ActualTime), IPC_CREAT | 0666);
+  if (actualTimeShmId < 0) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to create or open shared memory for Actual Time: %s",
                 strerror(errno));
     exit(EXIT_FAILURE);
   }
@@ -295,6 +293,19 @@ void initializeSharedResources(void) {
                 strerror(errno));
     exit(EXIT_FAILURE);
   }
+}
+
+void initializeProcessTable(void) {
+  key_t processTableKey =
+      getSharedMemoryKey(SHM_PATH, SHM_PROJ_ID_PROCESS_TABLE);
+  processTableShmId = shmget(
+      processTableKey, DEFAULT_MAX_PROCESSES * sizeof(PCB), IPC_CREAT | 0666);
+  if (processTableShmId < 0) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to create shared memory for processTable: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
 
   processTable = (PCB *)shmat(processTableShmId, NULL, 0);
   if (processTable == (void *)-1) {
@@ -302,5 +313,132 @@ void initializeSharedResources(void) {
                 "Failed to attach to processTable shared memory: %s",
                 strerror(errno));
     exit(EXIT_FAILURE);
+  }
+}
+
+void initializeResourceTable(void) {
+  key_t resourceTableKey =
+      getSharedMemoryKey(SHM_PATH, SHM_PROJ_ID_RESOURCE_TABLE);
+  resourceTableShmId =
+      shmget(resourceTableKey, sizeof(ResourceDescriptor), IPC_CREAT | 0666);
+  if (resourceTableShmId < 0) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to create shared memory for resourceTable: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  resourceTable = (ResourceDescriptor *)shmat(resourceTableShmId, NULL, 0);
+  if (resourceTable == (void *)-1) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to attach to resourceTable shared memory: %s",
+                strerror(errno));
+    exit(EXIT_FAILURE);
+  }
+
+  for (int i = 0; i < MAX_RESOURCES; i++) {
+    resourceTable->total[i] = INSTANCES_PER_RESOURCE;
+    resourceTable->available[i] = INSTANCES_PER_RESOURCE;
+    for (int j = 0; j < MAX_USER_PROCESSES; j++) {
+      resourceTable->allocated[j][i] = 0;
+    }
+  }
+}
+
+void initializeResourceDescriptors(ResourceDescriptor *rd) {
+  if (rd == NULL) {
+    log_message(
+        LOG_LEVEL_ERROR,
+        "Resource Descriptor initialization failed: Null pointer provided.");
+    return;
+  }
+
+  for (int i = 0; i < MAX_RESOURCES; i++) {
+
+    rd->total[i] = INSTANCES_PER_RESOURCE;
+    rd->available[i] = INSTANCES_PER_RESOURCE;
+
+    for (int j = 0; j < MAX_USER_PROCESSES; j++) {
+      rd->allocated[j][i] = 0;
+    }
+  }
+
+  log_message(LOG_LEVEL_INFO, "Resource Descriptors successfully initialized.");
+}
+
+void initializeSharedResources(void) {
+  msqId = initMessageQueue();
+
+  initializeSemaphore();
+
+  initializeSimulatedClock();
+
+  initializeActualTime();
+
+  initializeProcessTable();
+
+  initializeResourceTable();
+
+  log_message(LOG_LEVEL_INFO,
+              "All shared resources have been successfully initialized.");
+}
+
+int requestResource(int resourceType, int quantity, int pid) {
+  if (resourceType < 0 || resourceType >= MAX_RESOURCES || quantity <= 0) {
+    log_message(LOG_LEVEL_ERROR, "Invalid request parameters.");
+    return -1;
+  }
+
+  pthread_mutex_lock(&resourceTableMutex);
+
+  if (resourceTable->available[resourceType] >= quantity) {
+
+    resourceTable->available[resourceType] -= quantity;
+    resourceTable->allocated[pid][resourceType] += quantity;
+    log_message(LOG_LEVEL_INFO, "Resource %d allocated to process %d.",
+                resourceType, pid);
+
+    pthread_mutex_unlock(&resourceTableMutex);
+
+    return 0;
+  } else {
+    log_message(
+        LOG_LEVEL_WARN,
+        "Resource %d request by process %d cannot be satisfied currently.",
+        resourceType, pid);
+
+    pthread_mutex_unlock(&resourceTableMutex);
+
+    return 1;
+  }
+}
+
+int releaseResource(int resourceType, int quantity, int pid) {
+  if (resourceType < 0 || resourceType >= MAX_RESOURCES || quantity <= 0) {
+    log_message(LOG_LEVEL_ERROR, "Invalid release parameters.");
+    return -1;
+  }
+
+  pthread_mutex_lock(&resourceTableMutex);
+
+  if (resourceTable->allocated[pid][resourceType] >= quantity) {
+
+    resourceTable->allocated[pid][resourceType] -= quantity;
+    resourceTable->available[resourceType] += quantity;
+    log_message(LOG_LEVEL_INFO, "Resource %d released by process %d.",
+                resourceType, pid);
+
+    pthread_mutex_unlock(&resourceTableMutex);
+
+    return 0;
+  } else {
+    log_message(
+        LOG_LEVEL_ERROR,
+        "Process %d attempted to release more of resource %d than allocated.",
+        pid, resourceType);
+
+    pthread_mutex_unlock(&resourceTableMutex);
+
+    return -1;
   }
 }

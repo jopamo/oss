@@ -1,3 +1,6 @@
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -7,21 +10,20 @@
 #include "process.h"
 #include "shared.h"
 
+void initQueue(Queue *q, int capacity);
+void initializeQueues(void);
 void initializeSimulationEnvironment(void);
-void launchWorkerProcesses(void);
 void manageSimulation(void);
+unsigned long randRange(unsigned long min, unsigned long max);
+void launchWorkerProcesses(void);
 void scheduleNextProcess(void);
-
 int isEmptyQueue(Queue *queue);
 void enqueue(Queue *queue, pid_t pid);
 pid_t dequeue(Queue *queue);
-
 void handleTermination(pid_t pid);
 void moveToBlockedQueue(pid_t pid);
-
 void checkMessages(void);
 void updateSimulationClock(void);
-
 int findFreeProcessTableEntry(void);
 int findProcessIndexByPID(pid_t pid);
 void updateProcessTableOnFork(int index, pid_t pid);
@@ -63,7 +65,6 @@ int main(int argc, char *argv[]) {
 }
 
 void initializeSimulationEnvironment(void) {
-  msqId = initMessageQueue();
   initializeQueues();
 
   if (msqId < 0) {
@@ -84,7 +85,6 @@ void initializeSimulationEnvironment(void) {
 
   timekeeperPid = forkAndExecute("./timekeeper");
   tableprinterPid = forkAndExecute("./tableprinter");
-
 }
 
 void manageSimulation(void) {
@@ -131,11 +131,6 @@ void manageSimulation(void) {
 
   waitForChildProcesses();
 }
-
-#include "shared.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
 
 unsigned long randRange(unsigned long min, unsigned long max) {
   return min + rand() % (max - min + 1);

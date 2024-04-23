@@ -8,7 +8,6 @@ void runTimekeeper(void) {
   gProcessType = PROCESS_TYPE_TIMEKEEPER;
 
   initializeSharedResources();
-  msqId = initMessageQueue();
 
   log_message(LOG_LEVEL_INFO, "Starting timekeeping service.");
 

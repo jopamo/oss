@@ -1,4 +1,4 @@
-CLANG_PATH = $(shell command -v clang)
+#CLANG_PATH = $(shell command -v clang)
 CC = $(if $(CLANG_PATH),clang,gcc)
 
 CFLAGS = -Wall -Wextra -pedantic -g3 -O0 -Werror

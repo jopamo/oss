@@ -31,7 +31,6 @@ int main(int argc, char *argv[]) {
   }
 
   initializeSharedResources();
-  msqId = initMessageQueue();
   setupSignalHandlers();
 
   unsigned long lifespanSeconds = strtoul(argv[1], NULL, 10);

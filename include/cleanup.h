@@ -5,7 +5,6 @@
 
 extern volatile sig_atomic_t cleanupInitiated;
 
-void initializeProcessTable(void);
 void semUnlinkCreate(void);
 void atexitHandler(void);
 void cleanupResources(void);
@@ -14,14 +13,14 @@ void logFile_cleanup(void);
 void cleanupSharedMemorySegment(int shmId, const char *segmentName);
 void sharedMemory_cleanup(void);
 int messageQueue_cleanup(void);
-void killAllWorkers(void);
 void timeoutHandler(int signum);
 void setupTimeout(int seconds);
+void childExitHandler(int sig) {
 
-void parentSignalHandler(int sig);
-void setupParentSignalHandlers(void);
+  void parentSignalHandler(int sig);
+  void setupParentSignalHandlers(void);
 
-void cleanupAndExit(void);
-pid_t forkAndExecute(const char *executable);
+  void cleanupAndExit(void);
+  pid_t forkAndExecute(const char *executable);
 
 #endif

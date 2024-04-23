@@ -5,19 +5,6 @@
 
 volatile sig_atomic_t cleanupInitiated = 0;
 
-void initializeProcessTable(void) {
-  processTable = malloc(DEFAULT_MAX_PROCESSES * sizeof(PCB));
-  if (!processTable) {
-
-    perror("Failed to allocate memory for processTable");
-    exit(EXIT_FAILURE);
-  }
-
-  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
-    processTable[i].occupied = 0;
-  }
-}
-
 void semUnlinkCreate(void) {
   sem_unlink(clockSemName);
   clockSem = sem_open(clockSemName, O_CREAT | O_EXCL, SEM_PERMISSIONS, 1);
@@ -37,9 +24,18 @@ void cleanupResources(void) {
     return;
   }
 
+  for (int i = 0; i < MAX_PROCESSES; i++) {
+    if (processTable[i].occupied) {
+      kill(processTable[i].pid, SIGTERM);
+
+      log_message(LOG_LEVEL_INFO, "Termination signal sent to child PID: %d",
+                  processTable[i].pid);
+    }
+  }
+
   semaphore_cleanup();
   logFile_cleanup();
-  killAllWorkers();
+
   sharedMemory_cleanup();
   messageQueue_cleanup();
 
@@ -87,8 +83,16 @@ void cleanupSharedMemorySegment(int shmId, const char *segmentName) {
 
 void sharedMemory_cleanup(void) {
   cleanupSharedMemorySegment(simulatedTimeShmId, "Simulated Clock");
+  simulatedTimeShmId = -1;
+
   cleanupSharedMemorySegment(actualTimeShmId, "Actual Time");
+  actualTimeShmId = -1;
+
   cleanupSharedMemorySegment(processTableShmId, "Process Table");
+  processTableShmId = -1;
+
+  cleanupSharedMemorySegment(resourceTableShmId, "Resource Table");
+  resourceTableShmId = -1;
 }
 
 int messageQueue_cleanup(void) {
@@ -100,47 +104,6 @@ int messageQueue_cleanup(void) {
     msqId = -1;
   }
   return 0;
-}
-
-void killAllWorkers(void) {
-  log_message(LOG_LEVEL_INFO, "Sending termination signals to all processes.");
-
-  if (timekeeperPid > 0) {
-    kill(timekeeperPid, SIGTERM);
-    int status;
-    waitpid(timekeeperPid, &status, 0);
-    log_message(LOG_LEVEL_DEBUG,
-                "Termination signal sent and Timekeeper PID: %d exited.",
-                timekeeperPid);
-  }
-
-  if (tableprinterPid > 0) {
-    kill(tableprinterPid, SIGTERM);
-    int status;
-    waitpid(tableprinterPid, &status, 0);
-    log_message(LOG_LEVEL_DEBUG,
-                "Termination signal sent and TablePrinter PID: %d exited.",
-                tableprinterPid);
-  }
-
-  Message msg = {.mtype = 1, .mtext = 0};
-  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
-    if (processTable[i].occupied) {
-      msg.mtype = processTable[i].pid;
-      if (sendMessage(msqId, &msg) != -1) {
-        int status;
-        waitpid(processTable[i].pid, &status, 0);
-        log_message(LOG_LEVEL_DEBUG,
-                    "Termination message sent and worker PID: %d exited.",
-                    processTable[i].pid);
-      } else {
-        log_message(LOG_LEVEL_ERROR,
-                    "Failed to send termination message to PID: %d.",
-                    processTable[i].pid);
-      }
-      processTable[i].occupied = 0;
-    }
-  }
 }
 
 void timeoutHandler(int signum) {
@@ -219,11 +182,32 @@ void setupParentSignalHandlers(void) {
   sa.sa_handler = parentSignalHandler;
   sigfillset(&sa.sa_mask);
 
+  sa.sa_handler = childExitHandler;
+
   int signals[] = {SIGINT, SIGTERM, SIGALRM, SIGCHLD};
   for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); ++i) {
     if (sigaction(signals[i], &sa, NULL) == -1) {
       signalSafeLog("Error setting up parent signal handler. Exiting.");
       _exit(EXIT_FAILURE);
+    }
+  }
+}
+
+void childExitHandler(int sig) {
+  pid_t pid;
+  int status;
+
+  while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+
+    for (int i = 0; i < MAX_PROCESSES; i++) {
+      if (processTable[i].occupied && processTable[i].pid == pid) {
+
+        log_message(LOG_LEVEL_INFO, "Child process PID: %d terminated.", pid);
+
+        memset(&processTable[i], 0, sizeof(processTable[i]));
+
+        break;
+      }
     }
   }
 }
