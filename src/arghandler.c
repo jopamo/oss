@@ -6,8 +6,6 @@ int isNumber(const char *str) {
   return *end == '\0' && val > 0 && val <= INT_MAX;
 }
 
-#include "arghandler.h"
-
 int ossArgs(int argc, char *argv[]) {
   int opt;
   int sFlag = 0, iFlag = 0, fFlag = 0;

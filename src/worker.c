@@ -1,5 +1,5 @@
-#include "process.h"
 #include "shared.h"
+#include "user_process.h"
 
 #include <signal.h>
 #include <stdbool.h>
@@ -76,8 +76,9 @@ void sendStatusMessage(int msqId, pid_t pid, int status,
   msg.mtext = status;
   msg.usedTime = usedTime;
 
-  if (msgsnd(msqId, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
-    perror("msgsnd failed");
+  int result = sendMessage(msqId, &msg);
+  if (result != 0) {
+    perror("sendMessage failed");
     exit(EXIT_FAILURE);
   }
 }

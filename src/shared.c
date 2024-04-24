@@ -157,19 +157,31 @@ int initMessageQueue(void) {
 }
 
 int sendMessage(int msqId, Message *msg) {
+  sigset_t mask, oldmask;
+
   log_message(
       LOG_LEVEL_DEBUG,
       "[SEND] Attempting to send message. msqId: %d, Type: %ld, Content: %d",
       msqId, msg->mtype, msg->mtext);
 
   size_t messageSize = sizeof(*msg) - sizeof(long);
-  if (msgsnd(msqId, msg, messageSize, 0) == -1) {
-    log_message(LOG_LEVEL_ERROR,
-                "[SEND] Error: Failed to send message. msqId: %d, Type: %ld, "
-                "Content: %d, Error: %s (%d)",
-                msqId, msg->mtype, msg->mtext, strerror(errno), errno);
-    return -1;
-  }
+  int result;
+  do {
+    sigprocmask(SIG_BLOCK, &mask, &oldmask);
+    result = msgsnd(msqId, msg, messageSize, 0);
+    if (result == -1 && errno == EINTR) {
+      log_message(LOG_LEVEL_INFO,
+                  "[SEND] Send interrupted by signal, retrying.");
+    } else if (result == -1) {
+      log_message(LOG_LEVEL_ERROR,
+                  "[SEND] Error: Failed to send message. msqId: %d, Type: %ld, "
+                  "Content: %d, Error: %s (%d)",
+                  msqId, msg->mtype, msg->mtext, strerror(errno), errno);
+      return -1;
+    }
+    sigprocmask(SIG_SETMASK, &oldmask, NULL);
+
+  } while (result == -1 && errno == EINTR);
 
   log_message(LOG_LEVEL_INFO,
               "[SEND] Success: Message sent. msqId: %d, Type: %ld, Content: %d",
@@ -178,15 +190,18 @@ int sendMessage(int msqId, Message *msg) {
 }
 
 int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
+  sigset_t mask, oldmask;
+
   log_message(LOG_LEVEL_DEBUG,
               "[RECEIVE] Attempting to receive message. msqId: %d, Expected "
               "Type: %ld, Flags: %d",
               msqId, msgType, flags);
 
-  while (keepRunning) {
-    ssize_t result =
-        msgrcv(msqId, msg, sizeof(*msg) - sizeof(long), msgType, flags);
+  ssize_t result;
+  do {
+    sigprocmask(SIG_BLOCK, &mask, &oldmask);
 
+    result = msgrcv(msqId, msg, sizeof(*msg) - sizeof(long), msgType, flags);
     if (result == -1) {
       if (errno == EINTR) {
         log_message(
@@ -195,9 +210,11 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
         if (!keepRunning) {
           log_message(LOG_LEVEL_INFO,
                       "[RECEIVE] Terminating due to signal interruption.");
-          break;
+          return -1;
         }
-        continue;
+
+        sigprocmask(SIG_SETMASK, &oldmask, NULL);
+
       } else {
         log_message(LOG_LEVEL_ERROR,
                     "[RECEIVE] Error: Failed to receive message. msqId: %d, "
@@ -205,13 +222,15 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
                     msqId, msgType, strerror(errno), errno);
         return -1;
       }
-    } else {
-      log_message(LOG_LEVEL_INFO,
-                  "[RECEIVE] Success: Message received. msqId: %d, Type: %ld, "
-                  "Content: %d",
-                  msqId, msg->mtype, msg->mtext);
-      return 0;
     }
+  } while (result == -1 && errno == EINTR);
+
+  if (result >= 0) {
+    log_message(LOG_LEVEL_INFO,
+                "[RECEIVE] Success: Message received. msqId: %d, Type: %ld, "
+                "Content: %d",
+                msqId, msg->mtype, msg->mtext);
+    return 0;
   }
   return -1;
 }

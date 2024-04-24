@@ -3,8 +3,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "process.h"
 #include "shared.h"
+#include "user_process.h"
 
 void logProcessTable(void) {
   unsigned long simSec, simNano;

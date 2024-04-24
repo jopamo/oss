@@ -9,8 +9,14 @@ extern pid_t timekeeperPid;
 extern pid_t tableprinterPid;
 extern pid_t parentPid;
 
-void setupSignalHandlers(void);
+void atexitHandler(void);
+void childExitHandler(int sig);
+void parentSignalHandler(int sig);
+void sendSignalToChildGroups(int sig);
+void setupParentSignalHandlers(void);
 void waitForChildProcesses(void);
-void signalSafeLog(const char *msg);
+void ossSignalHandler(int sig);
+void setupTimeout(int seconds);
+void timeoutHandler(int signum);
 
 #endif

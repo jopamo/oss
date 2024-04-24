@@ -9,6 +9,7 @@
 #include "cleanup.h"
 #include "process.h"
 #include "shared.h"
+#include "user_process.h"
 
 void initQueue(Queue *q, int capacity);
 void initializeQueues(void);

@@ -1,8 +1,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "process.h"
 #include "shared.h"
+#include "user_process.h"
 
 void runTimekeeper(void) {
   gProcessType = PROCESS_TYPE_TIMEKEEPER;

@@ -1,4 +1,4 @@
-#CLANG_PATH = $(shell command -v clang)
+CLANG_PATH = $(shell command -v clang)
 CC = $(if $(CLANG_PATH),clang,gcc)
 
 CFLAGS = -Wall -Wextra -pedantic -g3 -O0 -Werror
@@ -15,10 +15,12 @@ SRC_DIR = src
 OBJ_DIR = obj
 BIN_DIR = bin
 
-OSS_SRC = arghandler.c shared.c oss.c cleanup.c process.c
-WORKER_SRC = arghandler.c shared.c worker.c process.c
-TIMEKEEPER_SRC = arghandler.c shared.c timekeeper.c process.c
-TABLEPRINTER_SRC = arghandler.c shared.c tableprinter.c process.c
+COMMON_SRC = arghandler.c shared.c user_process.c
+
+OSS_SRC = $(COMMON_SRC) oss.c cleanup.c process.c
+WORKER_SRC = $(COMMON_SRC) worker.c
+TIMEKEEPER_SRC = $(COMMON_SRC) timekeeper.c
+TABLEPRINTER_SRC = $(COMMON_SRC) tableprinter.c
 
 OSS_OBJ = $(OSS_SRC:%.c=$(OBJ_DIR)/%.o)
 WORKER_OBJ = $(WORKER_SRC:%.c=$(OBJ_DIR)/%.o)
@@ -31,16 +33,16 @@ directories:
 	mkdir -p $(OBJ_DIR) $(BIN_DIR)
 
 oss: $(OSS_OBJ)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/oss $^
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^
 
 worker: $(WORKER_OBJ)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/worker $^
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^
 
 timekeeper: $(TIMEKEEPER_OBJ)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/timekeeper $^
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^
 
 tableprinter: $(TABLEPRINTER_OBJ)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/tableprinter $^
+	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
