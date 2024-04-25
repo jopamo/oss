@@ -157,7 +157,6 @@ int initMessageQueue(void) {
 }
 
 int sendMessage(int msqId, Message *msg) {
-  sigset_t mask, oldmask;
 
   log_message(
       LOG_LEVEL_DEBUG,
@@ -167,7 +166,7 @@ int sendMessage(int msqId, Message *msg) {
   size_t messageSize = sizeof(*msg) - sizeof(long);
   int result;
   do {
-    sigprocmask(SIG_BLOCK, &mask, &oldmask);
+
     result = msgsnd(msqId, msg, messageSize, 0);
     if (result == -1 && errno == EINTR) {
       log_message(LOG_LEVEL_INFO,
@@ -179,7 +178,6 @@ int sendMessage(int msqId, Message *msg) {
                   msqId, msg->mtype, msg->mtext, strerror(errno), errno);
       return -1;
     }
-    sigprocmask(SIG_SETMASK, &oldmask, NULL);
 
   } while (result == -1 && errno == EINTR);
 
@@ -190,7 +188,6 @@ int sendMessage(int msqId, Message *msg) {
 }
 
 int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
-  sigset_t mask, oldmask;
 
   log_message(LOG_LEVEL_DEBUG,
               "[RECEIVE] Attempting to receive message. msqId: %d, Expected "
@@ -199,7 +196,6 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
 
   ssize_t result;
   do {
-    sigprocmask(SIG_BLOCK, &mask, &oldmask);
 
     result = msgrcv(msqId, msg, sizeof(*msg) - sizeof(long), msgType, flags);
     if (result == -1) {
@@ -212,8 +208,6 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
                       "[RECEIVE] Terminating due to signal interruption.");
           return -1;
         }
-
-        sigprocmask(SIG_SETMASK, &oldmask, NULL);
 
       } else {
         log_message(LOG_LEVEL_ERROR,

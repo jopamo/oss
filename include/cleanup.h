@@ -1,6 +1,9 @@
 #ifndef CLEANUP_H
 #define CLEANUP_H
 
+#include <signal.h>
+#include <sys/types.h>
+
 extern volatile sig_atomic_t cleanupInitiated;
 
 int messageQueue_cleanup(void);
