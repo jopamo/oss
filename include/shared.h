@@ -3,10 +3,12 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,142 +19,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define MAX_RESOURCES 10
-#define INSTANCES_PER_RESOURCE 20
-#define MAX_USER_PROCESSES 18
-
-#define MSG_PATH "/tmp"
-#define MSG_PROJ_ID 'a'
-
-#define SHM_PATH "/tmp"
-#define SHM_PROJ_ID_SIM_CLOCK 'S'
-#define SHM_PROJ_ID_ACT_TIME 'A'
-#define SHM_PROJ_ID_PROCESS_TABLE 'P'
-#define SHM_PROJ_ID_RESOURCE_TABLE 'R'
-#define SHM_PROJ_ID_DEADLOCK 'D'
-
-#define SEM_PERMISSIONS 0600
-
-#define MAX_RUNTIME 60
-
-#define TIMEKEEPER_SIM_SPEED_FACTOR 0.28
-
-#define DEFAULT_MAX_PROCESSES 5
-#define DEFAULT_MAX_SIMULTANEOUS 10
-#define DEFAULT_CHILD_TIME_LIMIT 10
-#define DEFAULT_LAUNCH_INTERVAL 1000
-#define DEFAULT_LOG_FILE_NAME "oss.log"
-
-#define LOG_LEVEL_DEBUG 0
-#define LOG_LEVEL_INFO 1
-#define LOG_LEVEL_WARN 2
-#define LOG_LEVEL_ERROR 3
-
-#define SUCCESS 0
-#define ERROR_INIT_QUEUE -1
-#define ERROR_INIT_SHM -2
-
-#define NANOSECONDS_IN_SECOND 1000000000
-
-#define LOG_BUFFER_SIZE 1024
-
-#define QUEUE_COUNT 3
-#define MAX_PROCESSES 20
-#define TIME_QUANTUM_BASE 10
-
-#define MESSAGE_TYPE_SCHEDULE 1
-#define MESSAGE_TYPE_TERMINATE 2
-#define MESSAGE_TYPE_BLOCKED 3
-
-typedef struct {
-  int total[INSTANCES_PER_RESOURCE];
-  int available[INSTANCES_PER_RESOURCE];
-  int allocated[MAX_USER_PROCESSES][INSTANCES_PER_RESOURCE];
-} ResourceDescriptor;
-
-typedef struct {
-  unsigned int lifespanSeconds;
-  unsigned int lifespanNanoSeconds;
-} WorkerConfig;
-
-typedef struct {
-  unsigned long seconds;
-  unsigned long nanoseconds;
-  int initialized;
-} SimulatedClock, ActualTime;
-
-typedef struct {
-  long mtype;
-  int mtext;
-  unsigned long usedTime;
-} Message;
-
-typedef struct PCB {
-  int occupied;
-  pid_t pid;
-  int startSeconds;
-  int startNano;
-  int blocked;
-  int eventBlockedUntilSec;
-  int eventBlockedUntilNano;
-} PCB;
-
-typedef struct {
-  pid_t *queue;
-  int front, rear;
-  int capacity;
-} Queue;
-
-typedef struct {
-  Queue highPriority;
-  Queue midPriority;
-  Queue lowPriority;
-} MLFQ;
-
-extern MLFQ mlfq;
-
-extern PCB *processTable;
-extern Queue queues[QUEUE_COUNT];
-
-typedef enum {
-  PROCESS_TYPE_OSS,
-  PROCESS_TYPE_WORKER,
-  PROCESS_TYPE_TIMEKEEPER
-} ProcessType;
-
-extern int logLevel;
-extern ProcessType gProcessType;
-
-extern struct timeval startTime;
-extern struct timeval lastLogTime;
-extern SimulatedClock *simClock;
-extern ActualTime *actualTime;
-
-extern FILE *logFile;
-extern char logFileName[256];
-
-extern int msqId;
-extern int simulatedTimeShmId;
-extern int actualTimeShmId;
-extern int processTableShmId;
-extern int resourceTableShmId;
-
-extern volatile sig_atomic_t keepRunning;
-extern volatile sig_atomic_t childTerminated;
-
-extern int maxProcesses;
-extern int maxSimultaneous;
-extern int childTimeLimit;
-extern int launchInterval;
-extern int currentChildren;
-
-extern sem_t *clockSem;
-extern const char *clockSemName;
-
-extern pthread_mutex_t logMutex;
-extern pthread_mutex_t resourceTableMutex;
-
-extern ResourceDescriptor *resourceTable;
+#include "globals.h"
 
 int getCurrentChildren(void);
 void setCurrentChildren(int value);
@@ -165,8 +32,16 @@ void initializeResourceTable(void);
 void initializeSharedResources(void);
 void cleanupSharedResources(void);
 void initializeResourceDescriptors(ResourceDescriptor *rd);
+
+int checkSafety(int pid, int resourceType, int request);
+void log_resource_state(const char *operation, int pid, int resourceType,
+                        int quantity, int availableBefore, int availableAfter);
 int requestResource(int resourceType, int quantity, int pid);
 int releaseResource(int resourceType, int quantity, int pid);
+
+void initQueue(Queue *q, int capacity);
+void initializeQueues(void);
+
 void *attachSharedMemory(const char *path, int proj_id, size_t size,
                          const char *segmentName);
 int detachSharedMemory(void **shmPtr, const char *segmentName);

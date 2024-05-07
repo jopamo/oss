@@ -31,7 +31,7 @@ void runTimekeeper(void) {
   while (keepRunning) {
     nanosleep(&(struct timespec){0, 250000000L}, NULL);
 
-    if (sem_wait(clockSem) != -1) {
+    if (better_sem_wait(clockSem) != -1) {
       clock_gettime(CLOCK_MONOTONIC, &currentTime);
       long elapsedSec = currentTime.tv_sec - startTime.tv_sec;
       long elapsedNano = currentTime.tv_nsec - startTime.tv_nsec;

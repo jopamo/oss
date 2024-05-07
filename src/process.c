@@ -9,13 +9,8 @@ pid_t parentPid;
 
 void waitForChildProcesses(void) {
   int status;
-  if (timekeeperPid != 0) {
-    waitpid(timekeeperPid, &status, 0);
-    timekeeperPid = 0;
-  }
-  if (tableprinterPid != 0) {
-    waitpid(tableprinterPid, &status, 0);
-    tableprinterPid = 0;
+  while ((timekeeperPid > 0 && waitpid(timekeeperPid, &status, 0) > 0) ||
+         (tableprinterPid > 0 && waitpid(tableprinterPid, &status, 0) > 0)) {
   }
 }
 
@@ -27,14 +22,14 @@ void parentSignalHandler(int sig) {
     snprintf(buffer, sizeof(buffer),
              "OSS (PID: %d): Shutdown requested by signal %d.\n", getpid(),
              sig);
-    signalSafeLog(buffer);
+    signalSafeLog(LOG_LEVEL_INFO, buffer);
     keepRunning = 0;
     sendSignalToChildGroups(SIGTERM);
     break;
   case SIGALRM:
     snprintf(buffer, sizeof(buffer), "OSS (PID: %d): Timer expired.\n",
              getpid());
-    signalSafeLog(buffer);
+    signalSafeLog(LOG_LEVEL_INFO, buffer);
     keepRunning = 0;
     sendSignalToChildGroups(SIGTERM);
     break;
@@ -43,13 +38,13 @@ void parentSignalHandler(int sig) {
     }
     snprintf(buffer, sizeof(buffer),
              "OSS (PID: %d): Child process terminated.\n", getpid());
-    signalSafeLog(buffer);
+    signalSafeLog(LOG_LEVEL_INFO, buffer);
     sendSignalToChildGroups(SIGTERM);
     break;
   default:
     snprintf(buffer, sizeof(buffer),
              "OSS (PID: %d): Unhandled signal %d received.\n", getpid(), sig);
-    signalSafeLog(buffer);
+    signalSafeLog(LOG_LEVEL_INFO, buffer);
     break;
   }
 }
@@ -68,7 +63,8 @@ void setupParentSignalHandlers(void) {
   int signals[] = {SIGINT, SIGTERM, SIGALRM};
   for (size_t i = 0; i < sizeof(signals) / sizeof(signals[0]); ++i) {
     if (sigaction(signals[i], &sa_parent, NULL) == -1) {
-      signalSafeLog("Error setting up parent signal handler. Exiting.");
+      signalSafeLog(LOG_LEVEL_ERROR,
+                    "Error setting up parent signal handler. Exiting.");
       _exit(EXIT_FAILURE);
     }
   }
@@ -105,13 +101,6 @@ void sendSignalToChildGroups(int sig) {
   }
 }
 
-void timeoutHandler(int signum) {
-  (void)signum;
-  log_message(LOG_LEVEL_INFO, "Timeout signal received.");
-  keepRunning = 0;
-  cleanupAndExit();
-}
-
 void setupTimeout(int seconds) {
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
@@ -119,6 +108,12 @@ void setupTimeout(int seconds) {
   sigemptyset(&sa.sa_mask);
   sigaction(SIGALRM, &sa, NULL);
 
+  log_message(LOG_LEVEL_DEBUG, "Setting up alarm for %d seconds.", seconds);
   alarm(seconds);
-  log_message(LOG_LEVEL_INFO, "Timeout setup for %d seconds.", seconds);
+}
+
+void timeoutHandler(int signum) {
+  log_message(LOG_LEVEL_INFO, "Timeout signal received, signum: %d.", signum);
+  keepRunning = 0;
+  cleanupAndExit();
 }

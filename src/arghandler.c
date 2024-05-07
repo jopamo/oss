@@ -1,4 +1,5 @@
 #include "arghandler.h"
+#include "globals.h"
 
 int isNumber(const char *str) {
   char *end;
@@ -7,8 +8,9 @@ int isNumber(const char *str) {
 }
 
 int ossArgs(int argc, char *argv[]) {
+  optind = 1; // Reset getopt's 'optind' to the start for robust unit testing
   int opt;
-  int sFlag = 0, iFlag = 0, fFlag = 0;
+  int nFlag = 0, sFlag = 0, iFlag = 0, fFlag = 0;
 
   while ((opt = getopt(argc, argv, "hn:s:i:f:")) != -1) {
     switch (opt) {
@@ -16,58 +18,61 @@ int ossArgs(int argc, char *argv[]) {
       printOSSUsage(argv[0]);
       return 1;
     case 'n':
-      if (isNumber(optarg)) {
+      if (optarg && isNumber(optarg)) {
         maxProcesses = atoi(optarg);
+        nFlag = 1;
       } else {
         log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Invalid number for -n option.");
-        return 2;
+                    "[OSS] Error: Invalid or missing number for -n option.");
+        return ERROR_INVALID_ARGS;
       }
       break;
     case 's':
-      sFlag = 1;
-      if (isNumber(optarg)) {
+      if (optarg && isNumber(optarg)) {
         maxSimultaneous = atoi(optarg);
+        sFlag = 1;
       } else {
         log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Invalid number for -s option.");
-        return 3;
+                    "[OSS] Error: Invalid or missing number for -s option.");
+        return ERROR_INVALID_ARGS;
       }
       break;
     case 'i':
-      iFlag = 1;
-      if (isNumber(optarg)) {
+      if (optarg && isNumber(optarg)) {
         launchInterval = atoi(optarg);
+        iFlag = 1;
       } else {
         log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Invalid number for -i option.");
-        return 4;
+                    "[OSS] Error: Invalid or missing number for -i option.");
+        return ERROR_INVALID_ARGS;
       }
       break;
     case 'f':
-      fFlag = 1;
-      strncpy(logFileName, optarg, sizeof(logFileName) - 1);
-      logFileName[sizeof(logFileName) - 1] = '\0';
+      if (optarg) {
+        strncpy(logFileName, optarg, sizeof(logFileName) - 1);
+        logFileName[sizeof(logFileName) - 1] = '\0';
+        fFlag = 1;
+      } else {
+        log_message(LOG_LEVEL_ERROR,
+                    "[OSS] Error: Missing filename for -f option.");
+        return ERROR_INVALID_ARGS;
+      }
       break;
     default:
       printOSSUsage(argv[0]);
-      return -1;
+      return ERROR_INVALID_ARGS;
     }
   }
 
-  if (!sFlag)
-    maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
-  if (!iFlag)
-    launchInterval = DEFAULT_LAUNCH_INTERVAL;
-  if (!fFlag) {
-    strncpy(logFileName, DEFAULT_LOG_FILE_NAME, sizeof(logFileName));
-    logFileName[sizeof(logFileName) - 1] = '\0';
+  if (!nFlag || !sFlag || !iFlag || !fFlag) {
+    log_message(LOG_LEVEL_ERROR, "[OSS] Error: Missing required options.");
+    return ERROR_INVALID_ARGS; // Ensure all required options are provided
   }
 
   logFile = fopen(logFileName, "w+");
   if (!logFile) {
-    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to open log file");
-    return 5;
+    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to open log file.");
+    return ERROR_FILE_OPEN;
   }
 
   log_message(LOG_LEVEL_INFO, "[OSS] Debug Info:");
@@ -79,14 +84,13 @@ int ossArgs(int argc, char *argv[]) {
   return 0;
 }
 
-void workerArgs(int argc, char *argv[], WorkerConfig *config) {
-  if (argc != 3) {
-    fprintf(stderr, "[Worker] Usage: %s <seconds> <nanoseconds>\n", argv[0]);
-    exit(EXIT_FAILURE);
+int workerArgs(int argc, char *argv[], WorkerConfig *config) {
+  if (argc != 3 || !isNumber(argv[1]) || !isNumber(argv[2])) { // Improved check
+    return ERROR_INVALID_ARGS;
   }
-
-  config->lifespanSeconds = strtoul(argv[1], NULL, 10);
-  config->lifespanNanoSeconds = strtoul(argv[2], NULL, 10);
+  config->lifespanSeconds = atoi(argv[1]);
+  config->lifespanNanoSeconds = atoi(argv[2]);
+  return SUCCESS;
 }
 
 void printOSSUsage(const char *programName) {

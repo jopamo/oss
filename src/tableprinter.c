@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "globals.h"
 #include "shared.h"
 #include "user_process.h"
 
@@ -36,6 +37,7 @@ void logProcessTable(void) {
 }
 
 int main(void) {
+  gProcessType = PROCESS_TYPE_TABLEPRINTER;
   setupSignalHandlers();
   initializeSharedResources();
 

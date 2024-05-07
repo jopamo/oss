@@ -7,12 +7,12 @@
 
 #include "arghandler.h"
 #include "cleanup.h"
+#include "globals.h"
 #include "process.h"
+#include "resource.h"
 #include "shared.h"
 #include "user_process.h"
 
-void initQueue(Queue *q, int capacity);
-void initializeQueues(void);
 void initializeSimulationEnvironment(void);
 void manageSimulation(void);
 unsigned long randRange(unsigned long min, unsigned long max);
@@ -24,24 +24,10 @@ pid_t dequeue(Queue *queue);
 void handleTermination(pid_t pid);
 void moveToBlockedQueue(pid_t pid);
 void checkMessages(void);
-void updateSimulationClock(void);
 int findFreeProcessTableEntry(void);
 int findProcessIndexByPID(pid_t pid);
 void updateProcessTableOnFork(int index, pid_t pid);
 void updateProcessTableOnTerminate(pid_t pid);
-
-void initQueue(Queue *q, int capacity) {
-  q->queue = (pid_t *)malloc(capacity * sizeof(pid_t));
-  q->front = 0;
-  q->rear = 0;
-  q->capacity = capacity;
-}
-
-void initializeQueues(void) {
-  initQueue(&mlfq.highPriority, MAX_PROCESSES);
-  initQueue(&mlfq.midPriority, MAX_PROCESSES);
-  initQueue(&mlfq.lowPriority, MAX_PROCESSES);
-}
 
 int main(int argc, char *argv[]) {
   gProcessType = PROCESS_TYPE_OSS;
@@ -67,6 +53,7 @@ int main(int argc, char *argv[]) {
 
 void initializeSimulationEnvironment(void) {
   initializeQueues();
+  initializeResourceTable();
 
   if (msqId < 0) {
     log_message(LOG_LEVEL_ERROR, "Failed to initialize message queue.");
@@ -93,7 +80,7 @@ void manageSimulation(void) {
   log_message(LOG_LEVEL_INFO, "Simulation management started.");
 
   while (keepRunning) {
-    if (sem_wait(clockSem) == -1) {
+    if (better_sem_wait(clockSem) == -1) {
       log_message(LOG_LEVEL_ERROR, "Failed to lock semaphore: %s",
                   strerror(errno));
       if (errno != EINTR)
@@ -123,13 +110,18 @@ void manageSimulation(void) {
     scheduleNextProcess();
     launchWorkerProcesses();
     checkMessages();
-    updateSimulationClock();
 
-    usleep(100000);
+    if (timeToCheckDeadlock()) {
+      if (checkForDeadlocks()) { // Assume this function is implemented in
+                                 // resource.c
+        resolveDeadlocks();      // Handle resolving deadlocks
+      }
+    }
+
+    usleep(100000); // Time delay to reduce CPU usage
   }
 
   log_message(LOG_LEVEL_INFO, "Simulation management ended. Cleaning up.");
-
   waitForChildProcesses();
 }
 
@@ -140,12 +132,13 @@ unsigned long randRange(unsigned long min, unsigned long max) {
 void launchWorkerProcesses(void) {
   struct timespec launchDelay = {0, launchInterval * 1000000};
 
-  while (keepRunning && getCurrentChildren() < maxSimultaneous) {
+  // Check both simultaneous and total maximum limits
+  while (keepRunning && getCurrentChildren() < maxSimultaneous &&
+         getCurrentChildren() < MAX_PROCESSES) {
     int index = findFreeProcessTableEntry();
     if (index == -1) {
-
       log_message(LOG_LEVEL_INFO, "No free process table entry available.");
-      sleep(1);
+      sleep(1); // Sleep to avoid tight loop if all entries are occupied.
       continue;
     }
 
@@ -153,15 +146,16 @@ void launchWorkerProcesses(void) {
     unsigned int lifespanNSec = rand() % 1000000000;
 
     pid_t pid = fork();
-    if (pid == 0) {
+    if (pid == 0) { // Child process
       char secStr[32], nsecStr[32];
       snprintf(secStr, sizeof(secStr), "%u", lifespanSec);
       snprintf(nsecStr, sizeof(nsecStr), "%u", lifespanNSec);
       execl("./worker", "worker", secStr, nsecStr, (char *)NULL);
       log_message(LOG_LEVEL_ERROR, "execl failed: %s", strerror(errno));
       _exit(EXIT_FAILURE);
-    } else if (pid > 0) {
+    } else if (pid > 0) { // Parent process
       updateProcessTableOnFork(index, pid);
+      setCurrentChildren(getCurrentChildren() + 1);
       log_message(LOG_LEVEL_INFO,
                   "Launched worker PID: %d, Lifespan: %u.%u seconds", pid,
                   lifespanSec, lifespanNSec);
@@ -244,11 +238,14 @@ pid_t dequeue(Queue *queue) {
 }
 
 void handleTermination(pid_t pid) {
-  for (int i = 0; i < DEFAULT_MAX_PROCESSES; i++) {
-    if (processTable[i].pid == pid) {
-      log_message(LOG_LEVEL_INFO, "Process PID: %d has terminated.", pid);
+  for (int i = 0; i < maxProcesses; i++) {
+    if (processTable[i].pid == pid && processTable[i].occupied) {
       processTable[i].occupied = 0;
-
+      processTable[i].pid = -1; // Reset PID to an invalid value
+      setCurrentChildren(getCurrentChildren() - 1); // Decrement children count
+      log_message(LOG_LEVEL_INFO,
+                  "Process PID: %d has terminated and cleared from table.",
+                  pid);
       break;
     }
   }
@@ -329,11 +326,31 @@ void updateProcessTableOnTerminate(pid_t pid) {
 }
 
 void checkMessages(void) {
+  Message msg;
+  while (msgrcv(msqId, &msg, sizeof(msg), 0, IPC_NOWAIT) != -1) {
+    switch (msg.mtext) {
+    case MESSAGE_TYPE_TERMINATE:
+      // Handle termination of a process
+      releaseResources(
+          msg.mtype, msg.resourceType,
+          msg.amount); // Assume all resources of the type are to be released
+      handleTermination(msg.mtype);
+      break;
 
-  log_message(LOG_LEVEL_DEBUG, "Checking messages from child processes.");
-}
+    case MESSAGE_TYPE_RELEASE:
+      // Handle release of specific resources
+      releaseResources(msg.mtype, msg.resourceType, msg.amount);
+      break;
 
-void updateSimulationClock(void) {
+    case MESSAGE_TYPE_REQUEST:
+      // Handle resource requests
+      handleResourceRequest(msg.mtype, msg.resourceType, msg.amount);
+      break;
 
-  log_message(LOG_LEVEL_DEBUG, "Updating simulation clock.");
+    default:
+      // Handle other types of messages or errors
+      fprintf(stderr, "Unknown message type received: %d\n", msg.mtext);
+      break;
+    }
+  }
 }

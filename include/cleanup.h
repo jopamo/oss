@@ -16,5 +16,6 @@ void logFile_cleanup(void);
 void semUnlinkCreate(void);
 void semaphore_cleanup(void);
 void sharedMemory_cleanup(void);
+void killProcess(int pid);
 
 #endif

@@ -1,0 +1,32 @@
+name: C CI
+
+on: [push, pull_request]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest  # Specifies the runner environment
+
+    steps:
+    - name: Check out repository code
+      uses: actions/checkout@v3
+
+    - name: Install GCC 13
+      run: |
+        sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+        sudo apt-get update
+        sudo apt-get install gcc-13 g++-13 -y
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 100
+        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
+
+    - name: Verify GCC version
+      run: |
+        gcc --version
+        g++ --version
+
+    - name: Build project
+      run: |
+        make
+
+    - name: Run tests
+      run: |
+        make test
