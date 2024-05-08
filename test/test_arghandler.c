@@ -6,11 +6,16 @@
 
 void setUp(void) {
   // Reset globals to default before each test
-  maxProcesses = 0;
-  maxSimultaneous = 0;
-  launchInterval = 0;
-  strcpy(logFileName, "");
-  logFile = NULL;
+  maxProcesses = DEFAULT_MAX_PROCESSES;
+  maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
+  launchInterval = DEFAULT_LAUNCH_INTERVAL;
+  strcpy(logFileName, DEFAULT_LOG_FILE_NAME);
+  if (logFile) {
+    fclose(logFile);
+    logFile = NULL;
+  }
+
+  initializeSharedResources();
 }
 
 void tearDown(void) {
@@ -19,6 +24,8 @@ void tearDown(void) {
     fclose(logFile);
     logFile = NULL;
   }
+
+  cleanupSharedResources();
 }
 
 void test_isNumber_ValidNumber(void) {

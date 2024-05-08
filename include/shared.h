@@ -24,23 +24,11 @@
 int getCurrentChildren(void);
 void setCurrentChildren(int value);
 
-void initializeSemaphore(void);
-void initializeSimulatedClock(void);
-void initializeActualTime(void);
-void initializeProcessTable(void);
-void initializeResourceTable(void);
+int initializeSimulatedClock(void);
+int initializeActualTime(void);
+int initializeProcessTable(void);
 void initializeSharedResources(void);
 void cleanupSharedResources(void);
-void initializeResourceDescriptors(ResourceDescriptor *rd);
-
-int checkSafety(int pid, int resourceType, int request);
-void log_resource_state(const char *operation, int pid, int resourceType,
-                        int quantity, int availableBefore, int availableAfter);
-int requestResource(int resourceType, int quantity, int pid);
-int releaseResource(int resourceType, int quantity, int pid);
-
-void initQueue(Queue *q, int capacity);
-void initializeQueues(void);
 
 void *attachSharedMemory(const char *path, int proj_id, size_t size,
                          const char *segmentName);

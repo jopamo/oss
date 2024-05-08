@@ -8,9 +8,9 @@ int isNumber(const char *str) {
 }
 
 int ossArgs(int argc, char *argv[]) {
-  optind = 1; // Reset getopt's 'optind' to the start for robust unit testing
+  optind = 1; // Reset getopt's 'optind' to start for unit testing
   int opt;
-  int nFlag = 0, sFlag = 0, iFlag = 0, fFlag = 0;
+  int nFlag = 0, sFlag = 0, iFlag = 0, fFlag = 0; // Explicitly initialized
 
   while ((opt = getopt(argc, argv, "hn:s:i:f:")) != -1) {
     switch (opt) {
@@ -23,7 +23,7 @@ int ossArgs(int argc, char *argv[]) {
         nFlag = 1;
       } else {
         log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Invalid or missing number for -n option.");
+                    "[OSS] Error: Invalid number for -n option.");
         return ERROR_INVALID_ARGS;
       }
       break;
@@ -33,7 +33,7 @@ int ossArgs(int argc, char *argv[]) {
         sFlag = 1;
       } else {
         log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Invalid or missing number for -s option.");
+                    "[OSS] Error: Invalid number for -s option.");
         return ERROR_INVALID_ARGS;
       }
       break;
@@ -43,7 +43,7 @@ int ossArgs(int argc, char *argv[]) {
         iFlag = 1;
       } else {
         log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Invalid or missing number for -i option.");
+                    "[OSS] Error: Invalid number for -i option.");
         return ERROR_INVALID_ARGS;
       }
       break;
@@ -66,7 +66,7 @@ int ossArgs(int argc, char *argv[]) {
 
   if (!nFlag || !sFlag || !iFlag || !fFlag) {
     log_message(LOG_LEVEL_ERROR, "[OSS] Error: Missing required options.");
-    return ERROR_INVALID_ARGS; // Ensure all required options are provided
+    return ERROR_INVALID_ARGS;
   }
 
   logFile = fopen(logFileName, "w+");
@@ -85,7 +85,7 @@ int ossArgs(int argc, char *argv[]) {
 }
 
 int workerArgs(int argc, char *argv[], WorkerConfig *config) {
-  if (argc != 3 || !isNumber(argv[1]) || !isNumber(argv[2])) { // Improved check
+  if (argc != 3 || !isNumber(argv[1]) || !isNumber(argv[2])) {
     return ERROR_INVALID_ARGS;
   }
   config->lifespanSeconds = atoi(argv[1]);

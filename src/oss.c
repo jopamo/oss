@@ -24,7 +24,6 @@ pid_t dequeue(Queue *queue);
 void handleTermination(pid_t pid);
 void moveToBlockedQueue(pid_t pid);
 void checkMessages(void);
-int findFreeProcessTableEntry(void);
 int findProcessIndexByPID(pid_t pid);
 void updateProcessTableOnFork(int index, pid_t pid);
 void updateProcessTableOnTerminate(pid_t pid);
@@ -43,16 +42,24 @@ int main(int argc, char *argv[]) {
 
   atexit(atexitHandler);
 
+  logFile = fopen(logFileName, "w+");
+  if (!logFile) {
+    perror("Failed to open log file");
+    exit(EXIT_FAILURE);
+  }
+
   initializeSimulationEnvironment();
   manageSimulation();
 
   cleanupAndExit();
   waitForChildProcesses();
+  fclose(logFile);
   return EXIT_SUCCESS;
 }
 
 void initializeSimulationEnvironment(void) {
-  initializeQueues();
+  MLFQ mlfq;
+  initializeQueues(&mlfq);
   initializeResourceTable();
 
   if (msqId < 0) {
@@ -79,13 +86,25 @@ void manageSimulation(void) {
   gProcessType = PROCESS_TYPE_OSS;
   log_message(LOG_LEVEL_INFO, "Simulation management started.");
 
-  while (keepRunning) {
+  unsigned long lastDeadlockCheck =
+      0; // to keep track of time since last deadlock check
+
+  while (keepRunning &&
+         (totalLaunched < MAX_PROCESSES || getCurrentChildren() > 0)) {
     if (better_sem_wait(clockSem) == -1) {
-      log_message(LOG_LEVEL_ERROR, "Failed to lock semaphore: %s",
+      log_message(LOG_LEVEL_ERROR, "Semaphore lock failed: %s",
                   strerror(errno));
       if (errno != EINTR)
         break;
       continue;
+    }
+
+    // Check for deadlocks every simulated second
+    if (simClock->seconds > lastDeadlockCheck) {
+      lastDeadlockCheck = simClock->seconds;
+      if (checkForDeadlocks()) {
+        resolveDeadlocks();
+      }
     }
 
     if (simClock && simClock->seconds >= MAX_RUNTIME) {
@@ -107,61 +126,69 @@ void manageSimulation(void) {
 
     sem_post(clockSem);
 
+    // Handle scheduling and process management
     scheduleNextProcess();
     launchWorkerProcesses();
     checkMessages();
 
-    if (timeToCheckDeadlock()) {
-      if (checkForDeadlocks()) { // Assume this function is implemented in
-                                 // resource.c
-        resolveDeadlocks();      // Handle resolving deadlocks
-      }
-    }
-
-    usleep(100000); // Time delay to reduce CPU usage
+    usleep(100000); // Reduce CPU usage
   }
 
   log_message(LOG_LEVEL_INFO, "Simulation management ended. Cleaning up.");
-  waitForChildProcesses();
-}
-
-unsigned long randRange(unsigned long min, unsigned long max) {
-  return min + rand() % (max - min + 1);
+  cleanupAndExit();
 }
 
 void launchWorkerProcesses(void) {
-  struct timespec launchDelay = {0, launchInterval * 1000000};
-
-  // Check both simultaneous and total maximum limits
   while (keepRunning && getCurrentChildren() < maxSimultaneous &&
-         getCurrentChildren() < MAX_PROCESSES) {
+         totalLaunched < MAX_PROCESSES) {
     int index = findFreeProcessTableEntry();
     if (index == -1) {
       log_message(LOG_LEVEL_INFO, "No free process table entry available.");
-      sleep(1); // Sleep to avoid tight loop if all entries are occupied.
+      sleep(1); // Prevent tight looping.
       continue;
     }
 
-    unsigned int lifespanSec = (rand() % childTimeLimit) + 1;
-    unsigned int lifespanNSec = rand() % 1000000000;
-
     pid_t pid = fork();
-    if (pid == 0) { // Child process
-      char secStr[32], nsecStr[32];
-      snprintf(secStr, sizeof(secStr), "%u", lifespanSec);
-      snprintf(nsecStr, sizeof(nsecStr), "%u", lifespanNSec);
-      execl("./worker", "worker", secStr, nsecStr, (char *)NULL);
-      log_message(LOG_LEVEL_ERROR, "execl failed: %s", strerror(errno));
-      _exit(EXIT_FAILURE);
-    } else if (pid > 0) { // Parent process
+    if (pid > 0) { // Parent process
       updateProcessTableOnFork(index, pid);
       setCurrentChildren(getCurrentChildren() + 1);
-      log_message(LOG_LEVEL_INFO,
-                  "Launched worker PID: %d, Lifespan: %u.%u seconds", pid,
-                  lifespanSec, lifespanNSec);
-      nanosleep(&launchDelay, NULL);
+      totalLaunched++;
+      log_message(LOG_LEVEL_INFO, "Launched worker PID: %d", pid);
+    } else if (pid == 0) {               // Child process
+      execl("./worker", "worker", NULL); // Execute worker program
+      perror("execl failed");
+      exit(EXIT_FAILURE);
     } else {
-      log_message(LOG_LEVEL_ERROR, "Fork failed: %s", strerror(errno));
+      perror("Fork failed");
+      continue;
+    }
+  }
+}
+
+void checkMessages(void) {
+  Message msg;
+  while (receiveMessage(msqId, &msg, 0, IPC_NOWAIT) != -1) {
+    switch (msg.mtext) {
+    case MESSAGE_TYPE_REQUEST:
+      if (requestResource(msg.resourceType, msg.amount, msg.mtype) == 0) {
+        log_resource_state("REQUEST", msg.mtype, msg.resourceType, msg.amount,
+                           getAvailable(msg.resourceType),
+                           getAvailableAfter(msg.resourceType));
+      }
+      break;
+    case MESSAGE_TYPE_RELEASE:
+      releaseResource(msg.resourceType, msg.amount, msg.mtype);
+      log_resource_state("RELEASE", msg.mtype, msg.resourceType, msg.amount,
+                         getAvailable(msg.resourceType),
+                         getAvailableAfter(msg.resourceType));
+      break;
+    case MESSAGE_TYPE_TERMINATE:
+      terminateProcess(msg.mtype);
+      break;
+    default:
+      log_message(LOG_LEVEL_WARN, "Received unknown message type: %d",
+                  msg.mtext);
+      break;
     }
   }
 }
@@ -262,18 +289,6 @@ void moveToBlockedQueue(pid_t pid) {
   }
 }
 
-int findFreeProcessTableEntry(void) {
-  for (int i = 0; i < maxProcesses; i++) {
-    if (!processTable[i].occupied) {
-      log_message(LOG_LEVEL_DEBUG, "Found free process table entry at index %d",
-                  i);
-      return i;
-    }
-  }
-  log_message(LOG_LEVEL_WARN, "No free process table entries found.");
-  return -1;
-}
-
 int findProcessIndexByPID(pid_t pid) {
   for (int i = 0; i < maxProcesses; i++) {
     if (processTable[i].occupied && processTable[i].pid == pid) {
@@ -322,35 +337,5 @@ void updateProcessTableOnTerminate(pid_t pid) {
   } else {
     log_message(LOG_LEVEL_WARN,
                 "No process table entry found for PID %d to terminate", pid);
-  }
-}
-
-void checkMessages(void) {
-  Message msg;
-  while (msgrcv(msqId, &msg, sizeof(msg), 0, IPC_NOWAIT) != -1) {
-    switch (msg.mtext) {
-    case MESSAGE_TYPE_TERMINATE:
-      // Handle termination of a process
-      releaseResources(
-          msg.mtype, msg.resourceType,
-          msg.amount); // Assume all resources of the type are to be released
-      handleTermination(msg.mtype);
-      break;
-
-    case MESSAGE_TYPE_RELEASE:
-      // Handle release of specific resources
-      releaseResources(msg.mtype, msg.resourceType, msg.amount);
-      break;
-
-    case MESSAGE_TYPE_REQUEST:
-      // Handle resource requests
-      handleResourceRequest(msg.mtype, msg.resourceType, msg.amount);
-      break;
-
-    default:
-      // Handle other types of messages or errors
-      fprintf(stderr, "Unknown message type received: %d\n", msg.mtext);
-      break;
-    }
   }
 }

@@ -70,10 +70,10 @@
 #define MSG_RESOURCE_GRANTED 1
 
 typedef struct {
-  int total[MAX_RESOURCES];     // Total instances for each resource
-  int available[MAX_RESOURCES]; // Available instances for each resource
-  int allocated[MAX_USER_PROCESSES]
-               [MAX_RESOURCES]; // Resources allocated per process
+  int total[MAX_RESOURCES];
+  int available[MAX_RESOURCES];
+  int allocated[MAX_USER_PROCESSES][MAX_RESOURCES];
+  int availableAfter[MAX_RESOURCES];
 } ResourceDescriptor;
 
 typedef struct {
@@ -179,5 +179,10 @@ extern int allocation[MAX_PROCESSES]
                                            // each process
 extern int need[MAX_PROCESSES]
                [MAX_RESOURCE_TYPES]; // Remaining resource needs of each process
+
+extern int totalLaunched;
+
+extern pid_t timekeeperPid;
+extern pid_t tableprinterPid;
 
 #endif // GLOBALS_H

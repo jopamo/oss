@@ -1,7 +1,7 @@
 # Compiler settings
 CC = gcc
-CFLAGS = -Wall -Wextra -pedantic -g3 -O0 -Werror -fsanitize=address -DDEBUG -fpic -fpie -fsanitize=undefined -fstack-protector-all
-INCLUDES = -Iinclude -I/usr/include/unity
+CFLAGS = -fsanitize=address -fsanitize=undefined -Wall -Wextra -pedantic -g3 -O0 -Werror -DDEBUG -fpic -fpie -fstack-protector-all
+INCLUDES = -Iinclude
 
 # Directories
 SRC_DIR = src
@@ -11,8 +11,8 @@ TEST_DIR = test
 TEST_OBJ_DIR = $(OBJ_DIR)/test
 
 # Source Files
-COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c shared.c resource.c user_process.c globals.c)
-OSS_SRC = $(COMMON_SRC) $(SRC_DIR)/oss.c $(SRC_DIR)/cleanup.c $(SRC_DIR)/process.c
+COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c shared.c resource.c user_process.c globals.c cleanup.c)
+OSS_SRC = $(COMMON_SRC) $(SRC_DIR)/oss.c $(SRC_DIR)/process.c
 WORKER_SRC = $(COMMON_SRC) $(SRC_DIR)/worker.c
 TIMEKEEPER_SRC = $(COMMON_SRC) $(SRC_DIR)/timekeeper.c
 TABLEPRINTER_SRC = $(COMMON_SRC) $(SRC_DIR)/tableprinter.c
@@ -27,6 +27,8 @@ TIMEKEEPER_OBJ = $(TIMEKEEPER_SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 TABLEPRINTER_OBJ = $(TABLEPRINTER_SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 # Targets
+.PHONY: all clean directories test
+
 all: directories test_executables oss worker timekeeper tableprinter
 
 test: $(TEST_EXECUTABLES)
@@ -63,5 +65,3 @@ $(TEST_OBJ_DIR)/%.o: $(TEST_DIR)/%.c
 clean:
 	rm -rf $(OBJ_DIR)/* $(BIN_DIR)/* $(TEST_OBJ_DIR)/*
 	mkdir -p $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR)
-
-.PHONY: all clean directories test_executables oss worker timekeeper tableprinter test

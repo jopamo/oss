@@ -12,7 +12,8 @@ void runTimekeeper(void) {
   log_message(LOG_LEVEL_INFO, "Starting timekeeping service.");
 
   if (!simClock || !actualTime) {
-    log_message(LOG_LEVEL_ERROR, "Failed to attach to shared memory segments.");
+    log_message(LOG_LEVEL_ERROR,
+                "Shared memory segments not attached properly.");
     exit(EXIT_FAILURE);
   }
 
@@ -20,6 +21,7 @@ void runTimekeeper(void) {
     simClock->seconds = 0;
     simClock->nanoseconds = 0;
     simClock->initialized = 1;
+    log_message(LOG_LEVEL_DEBUG, "Simulated clock initialized.");
   }
 
   double simSpeedFactor = 0.28;
@@ -29,7 +31,7 @@ void runTimekeeper(void) {
   clock_gettime(CLOCK_MONOTONIC, &startTime);
 
   while (keepRunning) {
-    nanosleep(&(struct timespec){0, 250000000L}, NULL);
+    nanosleep(&(struct timespec){0, 250000000L}, NULL); // Sleep for 250ms
 
     if (better_sem_wait(clockSem) != -1) {
       clock_gettime(CLOCK_MONOTONIC, &currentTime);
@@ -56,12 +58,12 @@ void runTimekeeper(void) {
 
       sem_post(clockSem);
     } else {
-      log_message(LOG_LEVEL_ERROR, "Failed to lock semaphore: %s",
+      log_message(LOG_LEVEL_ERROR, "Semaphore operation failed: %s",
                   strerror(errno));
     }
   }
 
-  log_message(LOG_LEVEL_INFO, "Timekeeping service ending.");
+  log_message(LOG_LEVEL_INFO, "Timekeeping service concluding.");
 }
 
 int main(void) {

@@ -13,7 +13,6 @@
 
 #define BOUND_B 500000000 // Upper bound for when actions occur in nanoseconds
 
-// Function prototypes
 void logStatus(long currentSeconds, long currentNanoSeconds, long targetSeconds,
                long targetNanoSeconds, int iterations);
 bool isTimeToTerminate(unsigned long currentSeconds,
@@ -27,14 +26,12 @@ void sendResourceRequest(int msqId, pid_t pid, int requestType,
 int main(int argc, char *argv[]) {
   gProcessType = PROCESS_TYPE_WORKER;
 
-  // Validate command-line arguments
   if (argc != 3) {
     fprintf(stderr, "Usage: %s <lifespan seconds> <lifespan nanoseconds>\n",
             argv[0]);
     exit(EXIT_FAILURE);
   }
 
-  // Initialize shared resources and setup signal handlers
   initializeSharedResources();
   setupSignalHandlers();
 

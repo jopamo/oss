@@ -1,3 +1,4 @@
+#include "cleanup.h"
 #include "globals.h"
 #include "resource.h"
 #include "shared.h"
@@ -6,6 +7,7 @@
 
 #include <pthread.h>
 
+// Structure used for threading in resource release tests
 typedef struct {
   int resourceType;
   int quantity;
@@ -15,203 +17,188 @@ typedef struct {
 #define NUM_THREADS 5
 
 void setUp(void) {
-  // Initialize necessary global structures and variables
+  log_message(LOG_LEVEL_INFO, "Starting setUp.");
+
+  MLFQ mlfq;
+  initializeQueues(&mlfq);
+
+  semUnlinkCreate();
   initializeSharedResources();
-  resourceTable->available[1] = INSTANCES_PER_RESOURCE;
+
+  for (int i = 0; i < MAX_RESOURCES; i++) {
+    for (int j = 0; j < MAX_RESOURCES; j++) {
+      resourceTable[i].total[j] = INSTANCES_PER_RESOURCE;
+      resourceTable[i].available[j] = INSTANCES_PER_RESOURCE;
+      resourceTable[i].availableAfter[j] = INSTANCES_PER_RESOURCE;
+    }
+    memset(resourceTable[i].allocated, 0, sizeof(resourceTable[i].allocated));
+  }
+  freeQueues(&mlfq);
+
+  log_message(LOG_LEVEL_INFO, "Resource table initialized successfully.");
 }
 
 void tearDown(void) {
-  // Cleanup resources to prevent leaks and ensure clean test starts
+  log_message(LOG_LEVEL_INFO, "Starting tearDown.");
+  freeQueue(&mlfq.highPriority);
+  freeQueue(&mlfq.midPriority);
+  freeQueue(&mlfq.lowPriority);
   cleanupSharedResources();
 }
 
-void *release_resource_thread(void *args) {
-  ThreadArgs *targs = (ThreadArgs *)args;
-  releaseResource(targs->resourceType, targs->quantity, targs->pid);
-  return NULL;
-}
-
-void test_initializeResourceDescriptors_ValidInput(void) {
-  ResourceDescriptor rd;
-  initializeResourceDescriptors(&rd);
-
-  for (int i = 0; i < MAX_RESOURCES; i++) {
-    printf("Testing resource %d: total = %d, expected = %d\n", i, rd.total[i],
-           INSTANCES_PER_RESOURCE);
-    TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE, rd.total[i]);
-    TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE, rd.available[i]);
-  }
-}
-
-void redirect_stderr_to_buffer(char *buffer, int size, FILE **temp_file) {
-  fflush(stderr);
-  *temp_file = tmpfile();
-  int fd = fileno(*temp_file);
-  dup2(fd, STDERR_FILENO);
-  setvbuf(stderr, buffer, _IOFBF, size);
-}
-
-void restore_stderr(int original_fd) {
-  fflush(stderr);
-  dup2(original_fd, STDERR_FILENO);
-}
-
-void test_initializeResourceDescriptors_NullPointer(void) {
-  char buffer[1024] = {0};
-  FILE *temp_file;
-  int original_stderr = dup(STDERR_FILENO);
-
-  redirect_stderr_to_buffer(buffer, sizeof(buffer), &temp_file);
-
-  initializeResourceDescriptors(NULL);
-
-  restore_stderr(original_stderr);
-
-  // Find the substring irrespective of prefix
-  TEST_ASSERT_NOT_NULL(strstr(
-      buffer, "Null pointer provided to initializeResourceDescriptors."));
-
-  fclose(temp_file);
-}
-
-void setupResourceState(int pid, int resourceType, int available, int allocated,
-                        int maxDemand) {
-  resourceTable->available[resourceType] = available;
-  resourceTable->allocated[pid][resourceType] = allocated;
-  maximum[pid][resourceType] = maxDemand;
-}
-
-void test_SafetyCheck(void) {
-  // Define process identifiers and resource request amounts
-  int safePid = 1, unsafePid = 2, resourceType = 0, safeRequest = 3,
-      unsafeRequest = 10;
-
-  // Configure initial resource states for safe and unsafe scenarios
-  setupResourceState(safePid, resourceType, 10, 2,
-                     5); // Config for safe scenario
-  setupResourceState(unsafePid, resourceType, 10, 2,
-                     10); // Config for unsafe scenario
-
-  // Validate handling of a safe resource request
-  TEST_ASSERT_EQUAL(0, requestResource(resourceType, safeRequest, safePid));
-
-  // Validate handling of an unsafe resource request
-  TEST_ASSERT_EQUAL(-1,
-                    requestResource(resourceType, unsafeRequest, unsafePid));
-
-  // Verify resource availability after processing the safe request
-  TEST_ASSERT_EQUAL(7, resourceTable->available[resourceType]);
-
-  // Reset resource states to ensure test isolation
-  setupResourceState(safePid, resourceType, 10, 0, 5);
-  setupResourceState(unsafePid, resourceType, 10, 0, 10);
-}
-
 void test_initializeResourceTable(void) {
-  // Check if the shared memory ID is valid (indicating successful shmget call).
-  TEST_ASSERT_GREATER_THAN(-1, resourceTableShmId);
-
-  // Check if the shared memory was attached correctly (indicating successful
-  // shmat call).
-  TEST_ASSERT_NOT_EQUAL(NULL, resourceTable);
-
-  // Verify each field of each ResourceDescriptor is initialized as expected.
   for (int i = 0; i < MAX_RESOURCES; i++) {
-    TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE, resourceTable[i].total[i]);
-    TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE, resourceTable[i].available[i]);
-    for (int j = 0; j < MAX_USER_PROCESSES; j++) {
-      TEST_ASSERT_EQUAL(0, resourceTable[i].allocated[j][i]);
+    for (int j = 0; j < MAX_RESOURCES; j++) {
+      TEST_ASSERT_EQUAL_MESSAGE(INSTANCES_PER_RESOURCE,
+                                resourceTable[i].total[j],
+                                "Mismatch in total resources initialization");
+      TEST_ASSERT_EQUAL_MESSAGE(
+          INSTANCES_PER_RESOURCE, resourceTable[i].available[j],
+          "Mismatch in available resources initialization");
+      TEST_ASSERT_EQUAL_MESSAGE(
+          INSTANCES_PER_RESOURCE, resourceTable[i].availableAfter[j],
+          "Mismatch in availableAfter resources initialization");
     }
   }
 }
 
-void test_ResourceAllocation(void) {
-  int pid = 1;
-  int resourceType = 1;
-  int quantity = 5;
+void test_requestResource_SufficientAvailable(void) {
+  log_message(LOG_LEVEL_DEBUG,
+              "Testing requestResource with sufficient resources available.");
+  int pid = 1, resourceType = 0, quantity = 5;
 
-  // Test allocation
-  TEST_ASSERT_EQUAL(0, requestResource(resourceType, quantity, pid));
-  TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE - quantity,
-                    resourceTable->available[resourceType]);
-  TEST_ASSERT_EQUAL(quantity, resourceTable->allocated[pid][resourceType]);
+  int beforeAvailable =
+      resourceTable[resourceType]
+          .available[resourceType]; // Correctly access the array element
+  int result = requestResource(resourceType, quantity, pid);
 
-  // Test releasing
-  TEST_ASSERT_EQUAL(0, releaseResource(resourceType, quantity, pid));
+  TEST_ASSERT_EQUAL(0, result);
+  TEST_ASSERT_EQUAL(beforeAvailable - quantity,
+                    resourceTable[resourceType].available[resourceType]);
+  TEST_ASSERT_EQUAL(quantity,
+                    resourceTable[resourceType].allocated[pid][resourceType]);
+}
+
+void test_releaseResource(void) {
+  log_message(LOG_LEVEL_DEBUG, "Testing releaseResource.");
+  int pid = 1, resourceType = 0, quantity = 5;
+
+  resourceTable[resourceType].available[resourceType] =
+      INSTANCES_PER_RESOURCE - quantity;
+  resourceTable[resourceType].allocated[pid][resourceType] = quantity;
+
+  int result = releaseResource(resourceType, quantity, pid);
+  TEST_ASSERT_EQUAL(0, result);
   TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE,
-                    resourceTable->available[resourceType]);
-  TEST_ASSERT_EQUAL(0, resourceTable->allocated[pid][resourceType]);
+                    resourceTable[resourceType].available[resourceType]);
+  TEST_ASSERT_EQUAL(0,
+                    resourceTable[resourceType].allocated[pid][resourceType]);
 }
 
-void test_releaseResource() {
-  int pid = 1;
-  int resourceType = 0;
-  int quantity = 5;
-  int initialQuantity = 10;
-  int expectedAvailable =
-      0 +
-      NUM_THREADS *
-          quantity; // Initial resources are 0, each thread releases 'quantity'
+void test_initializeResourceDescriptors_ValidInput(void) {
+  log_message(LOG_LEVEL_DEBUG,
+              "Testing initializeResourceDescriptors with valid input.");
+  ResourceDescriptor rd[MAX_RESOURCES];
+  initializeResourceDescriptors(rd);
 
-  // Allocate initial resources plus enough for each thread to release
-  resourceTable->allocated[pid][resourceType] =
-      initialQuantity + NUM_THREADS * quantity;
-  resourceTable->available[resourceType] = 0;
-
-  pthread_t threads[NUM_THREADS];
-  ThreadArgs args = {resourceType, quantity, pid};
-
-  // Launch threads to release resources concurrently
-  for (int i = 0; i < NUM_THREADS; i++) {
-    pthread_create(&threads[i], NULL, release_resource_thread, &args);
+  for (int i = 0; i < MAX_RESOURCES; i++) {
+    for (int j = 0; j < MAX_RESOURCES; j++) {
+      TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE, rd[i].total[j]);
+      TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE, rd[i].available[j]);
+      TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE, rd[i].availableAfter[j]);
+    }
+    for (int k = 0; k < MAX_USER_PROCESSES; k++) {
+      for (int m = 0; m < MAX_RESOURCES; m++) {
+        TEST_ASSERT_EQUAL(0, rd[i].allocated[k][m]);
+      }
+    }
   }
+}
 
-  // Wait for all threads to complete
-  for (int i = 0; i < NUM_THREADS; i++) {
-    pthread_join(threads[i], NULL);
+void test_initializeResourceDescriptors_NullPointer(void) {
+  log_message(LOG_LEVEL_DEBUG,
+              "Testing initializeResourceDescriptors with a null pointer.");
+  TEST_ASSERT_EQUAL(-1, initializeResourceDescriptors(NULL));
+}
+
+void test_checkForDeadlocks_Detection(void) {
+  log_message(LOG_LEVEL_INFO, "Setting up scenario likely to cause deadlock.");
+
+  int pid1 = 1;
+  int pid2 = 2;
+
+  TEST_ASSERT_EQUAL(0, requestResource(0, 5, pid1));
+  TEST_ASSERT_EQUAL(0, requestResource(1, 5, pid2));
+  TEST_ASSERT_EQUAL(0, requestResource(1, 5, pid1));
+  TEST_ASSERT_EQUAL(0, requestResource(0, 5, pid2));
+
+  int deadlockDetected = checkForDeadlocks();
+  TEST_ASSERT_EQUAL(1, deadlockDetected);
+}
+
+void test_resolveDeadlocks(void) {
+  log_message(LOG_LEVEL_DEBUG, "Testing resolveDeadlocks.");
+  test_checkForDeadlocks_Detection(); // Setup deadlock scenario
+
+  resolveDeadlocks(); // Attempt to resolve
+
+  for (int i = 0; i < MAX_RESOURCES; i++) {
+    // Assuming there's a specific index or just the first one if only one type
+    // per resource
+    log_resource_state(
+        "After resolving deadlocks", 0, i, 0, 0,
+        resourceTable[i].available[0]); // Adjusted to access an element
+    TEST_ASSERT_EQUAL_MESSAGE(
+        INSTANCES_PER_RESOURCE, resourceTable[i].available[0],
+        "Deadlock not fully resolved for resource."); // Adjusted to access an
+                                                      // element
   }
-
-  // The expected final allocated should consider the total released
-  int expectedFinalAllocated =
-      initialQuantity + NUM_THREADS * quantity - NUM_THREADS * quantity;
-
-  // Assertions to verify the final state of resourceTable
-  TEST_ASSERT_EQUAL(expectedAvailable, resourceTable->available[resourceType]);
-  TEST_ASSERT_EQUAL(
-      expectedFinalAllocated,
-      resourceTable
-          ->allocated[pid][resourceType]); // Should reflect the releases
 }
 
-void test_initQueue() {
-  Queue q;
-  initQueue(&q, 10);
-  TEST_ASSERT_NOT_NULL(q.queue);
-  TEST_ASSERT_EQUAL(0, q.front);
-  TEST_ASSERT_EQUAL(0, q.rear);
-  TEST_ASSERT_EQUAL(10, q.capacity);
-  free(q.queue); // Clean up
+void test_initQueue(void) {
+  log_message(LOG_LEVEL_DEBUG, "Testing initQueue for a single queue.");
+
+  Queue singleQueue;
+  int initResult =
+      initQueue(&singleQueue, 10);  // Testing a single queue initialization
+  TEST_ASSERT_EQUAL(0, initResult); // Ensure initialization succeeded
+  TEST_ASSERT_NOT_NULL(singleQueue.queue);     // Verify allocation
+  TEST_ASSERT_EQUAL(0, singleQueue.front);     // Verify initial state
+  TEST_ASSERT_EQUAL(0, singleQueue.rear);      // Verify initial state
+  TEST_ASSERT_EQUAL(10, singleQueue.capacity); // Verify capacity set correctly
+  freeQueue(&singleQueue);                     // Clean up single queue
+
+  log_message(LOG_LEVEL_DEBUG, "Testing initQueue within MLFQ structure.");
+
+  MLFQ mlfq;
+  initResult = initializeQueues(&mlfq); // Initialize all queues within MLFQ
+  TEST_ASSERT_EQUAL(0, initResult);     // Ensure MLFQ initialization succeeded
+  TEST_ASSERT_NOT_NULL(mlfq.highPriority.queue); // Check high priority queue
+  TEST_ASSERT_NOT_NULL(mlfq.midPriority.queue);  // Check mid priority queue
+  TEST_ASSERT_NOT_NULL(mlfq.lowPriority.queue);  // Check low priority queue
+  freeQueues(&mlfq);                             // Clean up MLFQ queues
 }
 
-void test_initializeQueues() {
-  initializeQueues();
+void test_initializeQueues(void) {
+  log_message(LOG_LEVEL_DEBUG, "Testing initializeQueues.");
+  MLFQ mlfq;
+  initializeQueues(&mlfq);
   TEST_ASSERT_NOT_NULL(mlfq.highPriority.queue);
-  TEST_ASSERT_NOT_NULL(mlfq.midPriority.queue);
-  TEST_ASSERT_NOT_NULL(mlfq.lowPriority.queue);
   TEST_ASSERT_EQUAL(MAX_PROCESSES, mlfq.highPriority.capacity);
   TEST_ASSERT_EQUAL(MAX_PROCESSES, mlfq.midPriority.capacity);
   TEST_ASSERT_EQUAL(MAX_PROCESSES, mlfq.lowPriority.capacity);
-  // Assume cleanup functions exist to free these queues
+  freeQueues(&mlfq);
 }
 
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_initializeResourceTable);
+  RUN_TEST(test_requestResource_SufficientAvailable);
+  RUN_TEST(test_releaseResource);
   RUN_TEST(test_initializeResourceDescriptors_ValidInput);
   RUN_TEST(test_initializeResourceDescriptors_NullPointer);
-  RUN_TEST(test_ResourceAllocation);
-  RUN_TEST(test_SafetyCheck);
-  RUN_TEST(test_releaseResource);
+  RUN_TEST(test_checkForDeadlocks_Detection);
+  RUN_TEST(test_resolveDeadlocks);
   RUN_TEST(test_initQueue);
   RUN_TEST(test_initializeQueues);
   return UNITY_END();

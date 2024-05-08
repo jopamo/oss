@@ -11,14 +11,25 @@ void signalSafeLog(int level, const char *message) {
   int msgLength = strlen(message);
 
   if (msgLength > LOG_BUFFER_SIZE - 2) {
-    msgLength = LOG_BUFFER_SIZE - 2;
+    msgLength = LOG_BUFFER_SIZE -
+                2; // Ensure there's room for newline and null terminator
   }
 
   memcpy(buffer, message, msgLength);
   buffer[msgLength] = '\n';
   buffer[msgLength + 1] = '\0';
 
-  write(STDERR_FILENO, buffer, strlen(buffer));
+  ssize_t written =
+      write(STDERR_FILENO, buffer,
+            msgLength + 1); // msgLength + 1 to include the newline
+  if (written == -1) {
+    // If write fails, try to handle error minimally
+    static const char errorMsg[] = "Error writing log\n";
+    ssize_t errorWritten =
+        write(STDERR_FILENO, errorMsg,
+              sizeof(errorMsg) - 1); // -1 to avoid writing the null terminator
+    (void)errorWritten; // Explicitly ignore the result to avoid warnings
+  }
 }
 
 void signalHandler(int sig) {

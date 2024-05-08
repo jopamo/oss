@@ -3,8 +3,6 @@
 #include "shared.h"
 #include "user_process.h"
 
-pid_t timekeeperPid = 0;
-pid_t tableprinterPid = 0;
 pid_t parentPid;
 
 void waitForChildProcesses(void) {
@@ -92,15 +90,6 @@ void childExitHandler(int sig) {
 
 void atexitHandler(void) { cleanupResources(); }
 
-void sendSignalToChildGroups(int sig) {
-  if (timekeeperPid > 0) {
-    kill(-timekeeperPid, sig);
-  }
-  if (tableprinterPid > 0) {
-    kill(-tableprinterPid, sig);
-  }
-}
-
 void setupTimeout(int seconds) {
   struct sigaction sa;
   memset(&sa, 0, sizeof(sa));
@@ -116,4 +105,40 @@ void timeoutHandler(int signum) {
   log_message(LOG_LEVEL_INFO, "Timeout signal received, signum: %d.", signum);
   keepRunning = 0;
   cleanupAndExit();
+}
+
+pid_t forkChildProcess(void) {
+  pid_t pid = fork(); // Fork the current process
+  if (pid == -1) {
+    perror("Failed to fork child process");
+    exit(EXIT_FAILURE);
+  }
+  return pid; // Return the PID of the forked process
+}
+
+void registerChildProcess(pid_t pid) {
+  int index = findFreeProcessTableEntry();
+  if (index != -1) {
+    processTable[index].pid = pid;
+    processTable[index].occupied = 1;
+    log_message(LOG_LEVEL_INFO,
+                "Registered child process with PID %d at index %d", pid, index);
+  } else {
+    log_message(LOG_LEVEL_ERROR, "No free entries to register process PID %d",
+                pid);
+  }
+}
+
+void terminateProcess(pid_t pid) { kill(pid, SIGTERM); }
+
+int findFreeProcessTableEntry(void) {
+  for (int i = 0; i < maxProcesses; i++) {
+    if (!processTable[i].occupied) {
+      log_message(LOG_LEVEL_DEBUG, "Found free process table entry at index %d",
+                  i);
+      return i;
+    }
+  }
+  log_message(LOG_LEVEL_WARN, "No free process table entries found.");
+  return -1;
 }

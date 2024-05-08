@@ -209,53 +209,63 @@ int receiveMessage(int msqId, Message *msg, long msgType, int flags) {
   return -1;
 }
 
-// Cleans up shared resources by detaching from shared memory segments
 void cleanupSharedResources(void) {
-  better_sem_wait(clockSem); // Wait on semaphore to synchronize access
+  printf("Starting %s.\n", __func__);
+
+  if (sem_wait(clockSem) != 0) {
+    log_message(LOG_LEVEL_ERROR, "Failed to acquire semaphore in %s: %s",
+                __func__, strerror(errno));
+    return; // Early exit if cannot lock semaphore
+  }
 
   if (simClock) {
-    if (detachSharedMemory((void **)&simClock, "Simulated Clock") ==
-        0) { // Detach from simulated clock shared memory
+    if (detachSharedMemory((void **)&simClock, "Simulated Clock") != 0) {
+      log_message(LOG_LEVEL_ERROR,
+                  "Failed to detach Simulated Clock shared memory.");
+    } else {
       log_message(LOG_LEVEL_INFO,
                   "Detached from Simulated Clock shared memory.");
+      simClock = NULL; // Clear the pointer after detaching
     }
-    simClock = NULL; // Clear the pointer after detaching
   }
 
   if (actualTime) {
-    if (detachSharedMemory((void **)&actualTime, "Actual Time") ==
-        0) { // Detach from actual time shared memory
+    if (detachSharedMemory((void **)&actualTime, "Actual Time") != 0) {
+      log_message(LOG_LEVEL_ERROR,
+                  "Failed to detach Actual Time shared memory.");
+    } else {
       log_message(LOG_LEVEL_INFO, "Detached from Actual Time shared memory.");
+      actualTime = NULL; // Clear the pointer after detaching
     }
-    actualTime = NULL; // Clear the pointer after detaching
   }
-  sem_post(clockSem); // Release semaphore after operation
+
+  if (sem_post(clockSem) != 0) {
+    log_message(LOG_LEVEL_ERROR, "Failed to release semaphore in %s: %s",
+                __func__, strerror(errno));
+  }
 }
 
-// Initializes the semaphore used for synchronizing access to shared resources
-void initializeSemaphore(void) {
-  clockSem = sem_open(clockSemName, O_CREAT, 0644,
-                      1); // Open or create a semaphore with initial value 1
-
-  if (clockSem == SEM_FAILED) { // Check if semaphore creation failed
+int initializeSemaphore(void) {
+  sem_unlink(clockSemName);
+  clockSem = sem_open(clockSemName, O_CREAT | O_EXCL, 0644, 1);
+  if (clockSem == SEM_FAILED) {
     log_message(LOG_LEVEL_ERROR, "Failed to create or open semaphore: %s",
                 strerror(errno));
-    exit(EXIT_FAILURE); // Exit if semaphore creation fails
+    return -1; // Semaphore creation failed
   }
+  return 0; // Success
 }
 
-// Initializes the simulated clock shared memory segment
-void initializeSimulatedClock(void) {
-  // Generate a unique key for the simulated clock's shared memory
+// Initialization of the simulated clock in shared memory
+int initializeSimulatedClock(void) {
   key_t simClockKey = ftok(SHM_PATH, SHM_PROJ_ID_SIM_CLOCK);
   if (simClockKey == -1) {
     log_message(LOG_LEVEL_ERROR,
                 "Failed to generate key for Simulated Clock: %s",
                 strerror(errno));
-    exit(EXIT_FAILURE);
+    return -1;
   }
 
-  // Create or access a shared memory segment for the simulated clock
   simulatedTimeShmId =
       shmget(simClockKey, sizeof(SimulatedClock), IPC_CREAT | 0666);
   if (simulatedTimeShmId < 0) {
@@ -263,87 +273,78 @@ void initializeSimulatedClock(void) {
         LOG_LEVEL_ERROR,
         "Failed to create or open shared memory for Simulated Clock: %s",
         strerror(errno));
-    exit(EXIT_FAILURE);
+    return -1;
   }
 
-  // Attach to the shared memory segment
   simClock = (SimulatedClock *)shmat(simulatedTimeShmId, NULL, 0);
   if (simClock == (void *)-1) {
     log_message(LOG_LEVEL_ERROR,
                 "Failed to attach to shared memory for Simulated Clock: %s",
                 strerror(errno));
-    exit(EXIT_FAILURE);
+    return -1;
   }
+  return 0;
 }
 
-// Initializes the actual time shared memory segment
-void initializeActualTime(void) {
-  // Generate a unique key for the actual time's shared memory
+// Initialization of the actual time in shared memory
+int initializeActualTime(void) {
   key_t actualTimeKey = ftok(SHM_PATH, SHM_PROJ_ID_ACT_TIME);
   if (actualTimeKey == -1) {
     log_message(LOG_LEVEL_ERROR, "Failed to generate key for Actual Time: %s",
                 strerror(errno));
-    exit(EXIT_FAILURE);
+    return -1;
   }
 
-  // Create or access a shared memory segment for the actual time
   actualTimeShmId = shmget(actualTimeKey, sizeof(ActualTime), IPC_CREAT | 0666);
   if (actualTimeShmId < 0) {
     log_message(LOG_LEVEL_ERROR,
                 "Failed to create or open shared memory for Actual Time: %s",
                 strerror(errno));
-    exit(EXIT_FAILURE);
+    return -1;
   }
 
-  // Attach to the shared memory segment
   actualTime = (ActualTime *)shmat(actualTimeShmId, NULL, 0);
   if (actualTime == (void *)-1) {
     log_message(LOG_LEVEL_ERROR,
                 "Failed to attach to shared memory for Actual Time: %s",
                 strerror(errno));
-    exit(EXIT_FAILURE);
+    return -1;
   }
+  return 0;
 }
 
-// Initializes the process table shared memory segment
-void initializeProcessTable(void) {
-  // Generate a unique key for the process table's shared memory
+// Initialization of the process table in shared memory
+int initializeProcessTable(void) {
   key_t processTableKey =
       getSharedMemoryKey(SHM_PATH, SHM_PROJ_ID_PROCESS_TABLE);
-
-  // Create or access a shared memory segment for the process table
   processTableShmId = shmget(
       processTableKey, DEFAULT_MAX_PROCESSES * sizeof(PCB), IPC_CREAT | 0666);
   if (processTableShmId < 0) {
     log_message(LOG_LEVEL_ERROR,
                 "Failed to create shared memory for processTable: %s",
                 strerror(errno));
-    exit(EXIT_FAILURE);
+    return -1;
   }
 
-  // Attach to the shared memory segment
   processTable = (PCB *)shmat(processTableShmId, NULL, 0);
   if (processTable == (void *)-1) {
     log_message(LOG_LEVEL_ERROR,
                 "Failed to attach to processTable shared memory: %s",
                 strerror(errno));
-    exit(EXIT_FAILURE);
+    return -1;
   }
+  return 0;
 }
 
+// Complete initialization of all shared resources
 void initializeSharedResources(void) {
-  msqId = initMessageQueue();
-
-  initializeSemaphore();
-
-  initializeSimulatedClock();
-
-  initializeActualTime();
-
-  initializeProcessTable();
-
-  initializeResourceTable();
-
+  if (initMessageQueue() == -1 || initializeSemaphore() == -1 ||
+      initializeSimulatedClock() == -1 || initializeActualTime() == -1 ||
+      initializeProcessTable() == -1 || initializeResourceTable() == -1) {
+    log_message(LOG_LEVEL_ERROR,
+                "Failed to initialize one or more shared resources");
+    exit(EXIT_FAILURE);
+  }
   log_message(LOG_LEVEL_INFO,
               "All shared resources have been successfully initialized.");
 }

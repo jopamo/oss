@@ -5,7 +5,7 @@
 #include "unity.h"
 
 void setUp(void) {
-  // Initialize necessary global structures and variables
+  // Initialize necessary global structures and variables before each test
   initializeSharedResources();
 }
 
@@ -14,11 +14,9 @@ void tearDown(void) {
   cleanupSharedResources();
 }
 
+// Existing tests
 void test_InitializeSemaphore(void) {
-  // Check if semaphore is not null and is available
   TEST_ASSERT_NOT_NULL(clockSem);
-
-  // Verify semaphore value is set to 1
   int sem_val;
   sem_getvalue(clockSem, &sem_val);
   TEST_ASSERT_EQUAL(1, sem_val);
@@ -49,18 +47,49 @@ void test_InitializeProcessTable(void) {
 }
 
 void test_AttachDetachSharedMemory(void) {
-  // Simulate attaching to shared memory
   SimulatedClock *simClock = (SimulatedClock *)attachSharedMemory(
       SHM_PATH, SHM_PROJ_ID_SIM_CLOCK, sizeof(SimulatedClock),
       "Simulated Clock");
   TEST_ASSERT_NOT_NULL(simClock);
-
-  // Test detaching from shared memory
   TEST_ASSERT_EQUAL(0,
                     detachSharedMemory((void **)&simClock, "Simulated Clock"));
   TEST_ASSERT_NULL(simClock);
 }
 
+// New test functions
+void test_initializeResourceTable(void) {
+  // Check if the resource table is properly initialized
+  TEST_ASSERT_NOT_NULL(resourceTable);
+  for (int i = 0; i < MAX_RESOURCES; i++) {
+    TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE, resourceTable[i].total[i]);
+    TEST_ASSERT_EQUAL(INSTANCES_PER_RESOURCE, resourceTable[i].available[i]);
+  }
+}
+
+void test_checkSafety(void) {
+  // Example: Ensure function correctly identifies safe state
+  // You will need specific states to test against
+  TEST_ASSERT_EQUAL(
+      1, checkSafety(0, 0,
+                     1)); // Assuming PID 0, resourceType 0, request 1 is safe
+}
+
+void test_requestResource(void) {
+  // Test resource request logic, assuming initial conditions are set
+  int pid = 1, resourceType = 1, quantity = 1;
+  int result = requestResource(resourceType, quantity, pid);
+  TEST_ASSERT_EQUAL(0, result); // Assuming request is successful
+}
+
+void test_releaseResource(void) {
+  // Test resource release logic
+  int pid = 1, resourceType = 1, quantity = 1;
+  requestResource(resourceType, quantity, pid); // Assume request was successful
+  TEST_ASSERT_EQUAL(0, releaseResource(resourceType, quantity,
+                                       pid)); // Assuming release is successful
+}
+
+// Main function to run all tests
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_InitializeSemaphore);
@@ -68,5 +97,9 @@ int main(void) {
   RUN_TEST(test_InitializeActualTime);
   RUN_TEST(test_InitializeProcessTable);
   RUN_TEST(test_AttachDetachSharedMemory);
+  RUN_TEST(test_initializeResourceTable);
+  RUN_TEST(test_checkSafety);
+  RUN_TEST(test_requestResource);
+  RUN_TEST(test_releaseResource);
   return UNITY_END();
 }

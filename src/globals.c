@@ -1,5 +1,4 @@
 #include "globals.h"
-#include "shared.h"
 
 int maxProcesses = DEFAULT_MAX_PROCESSES;
 int maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
@@ -41,7 +40,7 @@ int maxDemand[MAX_USER_PROCESSES]
 
 int currentChildren = 0; // Current number of child processes
 
-int currentLogLevel = LOG_LEVEL_INFO; // Current log level
+int currentLogLevel = LOG_LEVEL_DEBUG; // Current log level
 
 sem_t *clockSem = SEM_FAILED; // Semaphore for clock synchronization
 const char *clockSemName = "/simClockSem"; // Name of the clock semaphore
@@ -57,3 +56,8 @@ int available[MAX_RESOURCE_TYPES];
 int allocation[MAX_PROCESSES][MAX_RESOURCE_TYPES];
 int need[MAX_PROCESSES][MAX_RESOURCE_TYPES];
 int maximum[MAX_PROCESSES][MAX_RESOURCES];
+
+int totalLaunched = 0;
+
+pid_t timekeeperPid = 0;
+pid_t tableprinterPid = 0;
