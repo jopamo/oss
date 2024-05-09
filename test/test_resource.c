@@ -16,15 +16,7 @@ typedef struct {
 
 #define NUM_THREADS 5
 
-void setUp(void) {
-  log_message(LOG_LEVEL_INFO, "Starting setUp.");
-
-  MLFQ mlfq;
-  initializeQueues(&mlfq);
-
-  semUnlinkCreate();
-  initializeSharedResources();
-
+void initializeResources() {
   for (int i = 0; i < MAX_RESOURCES; i++) {
     for (int j = 0; j < MAX_RESOURCES; j++) {
       resourceTable[i].total[j] = INSTANCES_PER_RESOURCE;
@@ -33,6 +25,17 @@ void setUp(void) {
     }
     memset(resourceTable[i].allocated, 0, sizeof(resourceTable[i].allocated));
   }
+}
+
+void setUp(void) {
+  log_message(LOG_LEVEL_INFO, "Starting setUp.");
+
+  MLFQ mlfq;
+  initializeQueues(&mlfq);
+
+  semUnlinkCreate();
+  initializeSharedResources();
+  initializeResources();
   freeQueues(&mlfq);
 
   log_message(LOG_LEVEL_INFO, "Resource table initialized successfully.");
@@ -40,9 +43,7 @@ void setUp(void) {
 
 void tearDown(void) {
   log_message(LOG_LEVEL_INFO, "Starting tearDown.");
-  freeQueue(&mlfq.highPriority);
-  freeQueue(&mlfq.midPriority);
-  freeQueue(&mlfq.lowPriority);
+  freeQueues(&mlfq);
   cleanupSharedResources();
 }
 
