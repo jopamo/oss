@@ -1,5 +1,6 @@
 #include "process.h"
 #include "cleanup.h"
+#include "globals.h"
 #include "shared.h"
 #include "user_process.h"
 
@@ -78,7 +79,8 @@ void childExitHandler(int sig) {
     for (int i = 0; i < MAX_PROCESSES; i++) {
       if (processTable[i].occupied && processTable[i].pid == pid) {
 
-        log_message(LOG_LEVEL_INFO, "Child process PID: %d terminated.", pid);
+        log_message(LOG_LEVEL_INFO, 0, "Child process PID: %d terminated.",
+                    pid);
 
         memset(&processTable[i], 0, sizeof(processTable[i]));
 
@@ -97,23 +99,15 @@ void setupTimeout(int seconds) {
   sigemptyset(&sa.sa_mask);
   sigaction(SIGALRM, &sa, NULL);
 
-  log_message(LOG_LEVEL_DEBUG, "Setting up alarm for %d seconds.", seconds);
+  log_message(LOG_LEVEL_DEBUG, 0, "Setting up alarm for %d seconds.", seconds);
   alarm(seconds);
 }
 
 void timeoutHandler(int signum) {
-  log_message(LOG_LEVEL_INFO, "Timeout signal received, signum: %d.", signum);
+  log_message(LOG_LEVEL_INFO, 0, "Timeout signal received, signum: %d.",
+              signum);
   keepRunning = 0;
   cleanupAndExit();
-}
-
-pid_t forkChildProcess(void) {
-  pid_t pid = fork(); // Fork the current process
-  if (pid == -1) {
-    perror("Failed to fork child process");
-    exit(EXIT_FAILURE);
-  }
-  return pid; // Return the PID of the forked process
 }
 
 void registerChildProcess(pid_t pid) {
@@ -121,11 +115,14 @@ void registerChildProcess(pid_t pid) {
   if (index != -1) {
     processTable[index].pid = pid;
     processTable[index].occupied = 1;
-    log_message(LOG_LEVEL_INFO,
+    log_message(LOG_LEVEL_INFO, 0,
                 "Registered child process with PID %d at index %d", pid, index);
   } else {
-    log_message(LOG_LEVEL_ERROR, "No free entries to register process PID %d",
-                pid);
+    log_message(
+        LOG_LEVEL_ERROR, 0,
+        "No free entries to register process PID %d. Terminating process.",
+        pid);
+    kill(pid, SIGTERM); // Gracefully terminate the child process
   }
 }
 
@@ -134,11 +131,132 @@ void terminateProcess(pid_t pid) { kill(pid, SIGTERM); }
 int findFreeProcessTableEntry(void) {
   for (int i = 0; i < maxProcesses; i++) {
     if (!processTable[i].occupied) {
-      log_message(LOG_LEVEL_DEBUG, "Found free process table entry at index %d",
-                  i);
+      log_message(LOG_LEVEL_DEBUG, 0,
+                  "Found free process table entry at index %d", i);
       return i;
     }
   }
-  log_message(LOG_LEVEL_WARN, "No free process table entries found.");
+  log_message(LOG_LEVEL_WARN, 0, "No free process table entries found.");
+  return -1;
+}
+
+int stillChildrenToLaunch() {
+  return totalLaunched < MAX_PROCESSES && currentChildren < maxSimultaneous;
+}
+
+pid_t forkAndExecute(const char *executable) {
+  pid_t pid = fork();
+  if (pid == 0) {
+    execl(executable, executable, (char *)NULL);
+    perror("Failed to execute child process");
+    exit(EXIT_FAILURE);
+  } else if (pid < 0) {
+    perror("Failed to fork child process");
+    exit(EXIT_FAILURE);
+  }
+  return pid;
+}
+
+void sendSignalToChildGroups(int sig) {
+  if (timekeeperPid > 0) {
+    kill(-timekeeperPid, sig);
+  }
+  if (tableprinterPid > 0) {
+    kill(-tableprinterPid, sig);
+  }
+}
+
+void handleTermination(pid_t pid) {
+  int index = findProcessIndexByPID(pid);
+  if (index != -1) {
+    freeAllProcessResources(
+        index);               // Assume function frees resources in `resource.c`
+    clearProcessEntry(index); // Cleans up the process table entry
+    log_message(LOG_LEVEL_INFO, 0,
+                "Terminated process %d and cleared resources.", pid);
+    decrementCurrentChildren(); // Decrement the count of current children
+  }
+}
+
+void freeAllProcessResources(int index) {
+  releaseAllResourcesForProcess(
+      processTable[index].pid); // Releases all resources held by the process
+}
+
+void updateResourceAndProcessTables() {
+  logResourceTable(); // Logs current state of resources
+  logProcessTable();  // Logs current state of the process table
+}
+
+// Logs the current state of the resource table
+void logResourceTable() {
+  for (int i = 0; i < MAX_RESOURCES; i++) {
+    log_message(LOG_LEVEL_DEBUG, 0, "Resource %d: Available %d", i,
+                resourceTable[i].available);
+  }
+}
+
+// Logs the current state of the process table
+void logProcessTable() {
+  for (int i = 0; i < MAX_PROCESSES; i++) {
+    if (processTable[i].occupied) {
+      log_message(LOG_LEVEL_DEBUG, 0, "Process %d: PID %ld, State %s", i,
+                  processTable[i].pid,
+                  processStateToString(processTable[i].state));
+    }
+  }
+}
+
+void decrementCurrentChildren() {
+  if (currentChildren > 0) {
+    currentChildren--;
+  }
+}
+
+const char *processStateToString(int state) {
+  switch (state) {
+  case PROCESS_RUNNING:
+    return "Running";
+  case PROCESS_WAITING:
+    return "Waiting";
+  case PROCESS_TERMINATED:
+    return "Terminated";
+  default:
+    return "Unknown";
+  }
+}
+
+// Clears a process entry in the process table
+void clearProcessEntry(int index) {
+  processTable[index].occupied = 0;
+  processTable[index].pid = 0;
+  processTable[index].state = PROCESS_TERMINATED;
+}
+
+/**
+ * Attempts to terminate a process or process group with the given process ID.
+ * @param pid The process ID or process group ID of the target. Negative PID for
+ * process groups.
+ * @param sig The signal to send.
+ */
+int killProcess(int pid, int sig) {
+  if (kill(pid, sig) == -1) {
+    perror("Error killing process or process group");
+    return -1;
+  }
+  return SUCCESS;
+}
+
+int findProcessIndexByPID(pid_t pid) {
+  for (int i = 0; i < maxProcesses; i++) {
+    if (processTable[i].occupied && processTable[i].pid == pid) {
+      log_message(LOG_LEVEL_DEBUG, 0,
+                  "Found process table entry for PID %ld at index %d",
+                  (long)pid, i);
+      return i;
+    }
+  }
+  log_message(LOG_LEVEL_WARN, 0, "No process table entry found for PID %ld",
+              (long)pid);
   return -1;
 }

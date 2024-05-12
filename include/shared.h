@@ -19,24 +19,25 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include "globals.h"
+typedef struct {
+  long senderPid;   // Message type, used for routing (e.g., process ID)
+  int commandType;  // Command type (1 for request, 0 for release)
+  int resourceType; // Resource type being requested or released
+  int count;        // Number of instances being requested or released
+} MessageA5;
 
 int getCurrentChildren(void);
 void setCurrentChildren(int value);
 
-int initializeSimulatedClock(void);
-int initializeActualTime(void);
-int initializeProcessTable(void);
-void initializeSharedResources(void);
 void cleanupSharedResources(void);
 
 void *attachSharedMemory(const char *path, int proj_id, size_t size,
                          const char *segmentName);
 int detachSharedMemory(void **shmPtr, const char *segmentName);
-void log_message(int level, const char *format, ...);
+void log_message(int level, int logToFile, const char *format, ...);
 key_t getSharedMemoryKey(const char *path, int proj_id);
-int initMessageQueue(void);
-int sendMessage(int msqId, Message *msg);
-int receiveMessage(int msqId, Message *msg, long msgType, int flags);
+int sendMessage(int msqId, const void *msg, size_t msgSize);
+int receiveMessage(int msqId, void *msg, size_t msgSize, long msgType,
+                   int flags);
 
 #endif

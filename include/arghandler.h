@@ -9,7 +9,7 @@
 
 int isNumber(const char *str);
 int ossArgs(int argc, char *argv[]);
-int workerArgs(int argc, char *argv[], WorkerConfig *config);
+// int workerArgs(int argc, char *argv[], WorkerConfig *config);
 void printOSSUsage(const char *programName);
 
 #endif

@@ -1,15 +1,17 @@
 #include "arghandler.h"
 #include "globals.h"
+#include "init.h"
 #include "shared.h"
 #include "unity.c"
 #include "unity.h"
 
 void setUp(void) {
-  // Reset globals to default before each test
   maxProcesses = DEFAULT_MAX_PROCESSES;
   maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
   launchInterval = DEFAULT_LAUNCH_INTERVAL;
   strcpy(logFileName, DEFAULT_LOG_FILE_NAME);
+
+  // Ensure log file is closed if opened
   if (logFile) {
     fclose(logFile);
     logFile = NULL;
@@ -19,7 +21,6 @@ void setUp(void) {
 }
 
 void tearDown(void) {
-  // Close log file if opened
   if (logFile != NULL) {
     fclose(logFile);
     logFile = NULL;
@@ -44,8 +45,7 @@ void test_isNumber_InvalidNumber(void) {
 void test_ossArgs_ValidInputs(void) {
   char *argv[] = {"program", "-n",  "5",  "-s",      "3",
                   "-i",      "100", "-f", "log.txt", NULL};
-  int argc = sizeof(argv) / sizeof(argv[0]) -
-             1; // Correctly calculate argc excluding NULL
+  int argc = sizeof(argv) / sizeof(argv[0]) - 1; // Adjust for NULL
 
   TEST_ASSERT_EQUAL(0, ossArgs(argc, argv));
   TEST_ASSERT_EQUAL(5, maxProcesses);
@@ -56,12 +56,21 @@ void test_ossArgs_ValidInputs(void) {
 
 void test_ossArgs_MissingValues(void) {
   char *argv[] = {"program", "-n", "-s", "3", "-i", "100", "-f", NULL};
-  int argc = sizeof(argv) / sizeof(argv[0]) -
-             1; // Correctly calculate argc excluding NULL
+  int argc = sizeof(argv) / sizeof(argv[0]) - 1;
 
   TEST_ASSERT_EQUAL(ERROR_INVALID_ARGS, ossArgs(argc, argv));
 }
 
+int main(void) {
+  UNITY_BEGIN();
+  RUN_TEST(test_isNumber_ValidNumber);
+  RUN_TEST(test_isNumber_InvalidNumber);
+  RUN_TEST(test_ossArgs_ValidInputs);
+  RUN_TEST(test_ossArgs_MissingValues);
+  return UNITY_END();
+}
+
+/*
 void test_workerArgs_ValidInputs(void) {
   char *argv[] = {"worker", "10", "500", NULL};
   int argc = sizeof(argv) / sizeof(argv[0]) -
@@ -82,14 +91,4 @@ void test_workerArgs_InvalidInputs(void) {
   int result = workerArgs(argc, argv, &config);
   TEST_ASSERT_EQUAL(ERROR_INVALID_ARGS, result);
 }
-
-int main(void) {
-  UNITY_BEGIN();
-  RUN_TEST(test_isNumber_ValidNumber);
-  RUN_TEST(test_isNumber_InvalidNumber);
-  RUN_TEST(test_ossArgs_ValidInputs);
-  RUN_TEST(test_ossArgs_MissingValues);
-  RUN_TEST(test_workerArgs_ValidInputs);
-  RUN_TEST(test_workerArgs_InvalidInputs);
-  return UNITY_END();
-}
+*/

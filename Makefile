@@ -9,51 +9,35 @@ OBJ_DIR = obj
 BIN_DIR = bin
 TEST_DIR = test
 TEST_OBJ_DIR = $(OBJ_DIR)/test
+TEST_BIN_DIR = $(BIN_DIR)/test
 
 # Source Files
-COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c shared.c resource.c user_process.c globals.c cleanup.c)
-OSS_SRC = $(COMMON_SRC) $(SRC_DIR)/oss.c $(SRC_DIR)/process.c
-WORKER_SRC = $(COMMON_SRC) $(SRC_DIR)/worker.c
-TIMEKEEPER_SRC = $(COMMON_SRC) $(SRC_DIR)/timekeeper.c
-TABLEPRINTER_SRC = $(COMMON_SRC) $(SRC_DIR)/tableprinter.c
-TEST_SOURCES = $(wildcard $(TEST_DIR)/*.c)
-TEST_EXECUTABLES = $(patsubst $(TEST_DIR)/%.c, $(BIN_DIR)/%, $(TEST_SOURCES))
+COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c shared.c resource.c user_process.c globals.c queue.c)
+OSS_VERSIONS = $(wildcard $(SRC_DIR)/ossA*.c)
+OSS_DEPS = $(addprefix $(SRC_DIR)/, process.c init.c cleanup.c)  # Specific dependencies for OSS versions
+TEST_SRC = $(wildcard $(TEST_DIR)/*.c)
+TEST_COMMON_SRC = $(COMMON_SRC) $(OSS_DEPS)
 
 # Object Files
-COMMON_OBJ = $(COMMON_SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
-OSS_OBJ = $(OSS_SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
-WORKER_OBJ = $(WORKER_SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
-TIMEKEEPER_OBJ = $(TIMEKEEPER_SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
-TABLEPRINTER_OBJ = $(TABLEPRINTER_SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
+COMMON_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(COMMON_SRC))
+OSS_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(OSS_VERSIONS))
+OSS_DEPS_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(OSS_DEPS))
+TEST_OBJ = $(patsubst $(TEST_DIR)/%.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRC))
+TEST_COMMON_OBJ = $(patsubst $(SRC_DIR)/%.c,$(TEST_OBJ_DIR)/%.o,$(TEST_COMMON_SRC))
+
+# Executables
+OSS_EXECUTABLES = $(patsubst $(SRC_DIR)/%.c,$(BIN_DIR)/%,$(OSS_VERSIONS))
+TEST_EXECUTABLES = $(patsubst $(TEST_DIR)/%.c,$(TEST_BIN_DIR)/%,$(TEST_SRC))
 
 # Targets
 .PHONY: all clean directories test
 
-all: directories test_executables oss worker timekeeper tableprinter
-
-test: $(TEST_EXECUTABLES)
-	for test_exec in $(TEST_EXECUTABLES); do \
-		./$$test_exec; \
-	done
+all: directories $(OSS_EXECUTABLES)
 
 directories:
-	mkdir -p $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR)
+	mkdir -p $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(TEST_BIN_DIR)
 
-oss: $(OSS_OBJ)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^
-
-worker: $(WORKER_OBJ)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^
-
-timekeeper: $(TIMEKEEPER_OBJ)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^
-
-tableprinter: $(TABLEPRINTER_OBJ)
-	$(CC) $(CFLAGS) -o $(BIN_DIR)/$@ $^
-
-test_executables: $(TEST_EXECUTABLES)
-
-$(BIN_DIR)/%: $(TEST_DIR)/%.c $(COMMON_OBJ)
+$(BIN_DIR)/%: $(OBJ_DIR)/%.o $(COMMON_OBJ) $(OSS_DEPS_OBJ)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
@@ -62,6 +46,13 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 $(TEST_OBJ_DIR)/%.o: $(TEST_DIR)/%.c
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
+$(TEST_BIN_DIR)/%: $(TEST_OBJ_DIR)/%.o $(TEST_COMMON_OBJ)
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^
+
+test: directories $(TEST_EXECUTABLES)
+	@echo "Running tests..."
+	@$(foreach test,$(TEST_EXECUTABLES),./$(test);)
+
 clean:
-	rm -rf $(OBJ_DIR)/* $(BIN_DIR)/* $(TEST_OBJ_DIR)/*
-	mkdir -p $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR)
+	rm -rf $(OBJ_DIR)/* $(BIN_DIR)/* $(TEST_OBJ_DIR)/* $(TEST_BIN_DIR)/*
+	mkdir -p $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(TEST_BIN_DIR)

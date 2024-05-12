@@ -19,22 +19,23 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define MAX_RESOURCES 10
-#define INSTANCES_PER_RESOURCE 20
+#define MAX_PROCESSES 100
 #define MAX_USER_PROCESSES 18
+
 #define MSG_PATH "/tmp"
 #define MSG_PROJ_ID 'a'
+
 #define SHM_PATH "/tmp"
 #define SHM_PROJ_ID_SIM_CLOCK 'S'
 #define SHM_PROJ_ID_ACT_TIME 'A'
 #define SHM_PROJ_ID_PROCESS_TABLE 'P'
 #define SHM_PROJ_ID_RESOURCE_TABLE 'R'
 #define SHM_PROJ_ID_DEADLOCK 'D'
+
 #define SEM_PERMISSIONS 0600
+
 #define MAX_RUNTIME 30
 #define TIMEKEEPER_SIM_SPEED_FACTOR 0.28
-#define MAX_RESOURCE_TYPES 10
-#define MAX_PROCESSES 100
 
 #define DEFAULT_MAX_PROCESSES 8
 #define DEFAULT_MAX_SIMULTANEOUS 10
@@ -49,10 +50,10 @@
 #define LOG_LEVEL_ERROR 4
 
 #define SUCCESS 0
-#define ERROR_INVALID_ARGS -1
-#define ERROR_INIT_QUEUE -2
-#define ERROR_INIT_SHM -3
-#define ERROR_FILE_OPEN -4
+#define ERROR_INVALID_ARGS -64
+#define ERROR_INIT_QUEUE -65
+#define ERROR_INIT_SHM -66
+#define ERROR_FILE_OPEN -67
 
 #define NANOSECONDS_IN_SECOND 1000000000
 
@@ -67,33 +68,11 @@
 #define MESSAGE_TYPE_RELEASE 4
 #define MESSAGE_TYPE_REQUEST 5
 
-#define MSG_RESOURCE_GRANTED 1
-
-typedef struct {
-  int total[MAX_RESOURCES];
-  int available[MAX_RESOURCES];
-  int allocated[MAX_USER_PROCESSES][MAX_RESOURCES];
-  int availableAfter[MAX_RESOURCES];
-} ResourceDescriptor;
-
-typedef struct {
-  unsigned int lifespanSeconds;
-  unsigned int lifespanNanoSeconds;
-} WorkerConfig;
-
 typedef struct {
   unsigned long seconds;
   unsigned long nanoseconds;
   int initialized;
 } SimulatedClock, ActualTime;
-
-typedef struct {
-  long mtype;
-  int mtext;
-  int resourceType;
-  int amount;
-  int resourceAmount;
-} Message;
 
 typedef struct PCB {
   int occupied;
@@ -103,6 +82,7 @@ typedef struct PCB {
   int blocked;
   int eventBlockedUntilSec;
   int eventBlockedUntilNano;
+  int state;
 } PCB;
 
 typedef struct {
@@ -131,8 +111,6 @@ extern int maxSimultaneous;
 extern int launchInterval;
 extern char logFileName[256];
 extern FILE *logFile;
-
-extern int maxDemand[MAX_USER_PROCESSES][MAX_RESOURCES];
 
 extern MLFQ mlfq;
 
@@ -163,26 +141,18 @@ extern sem_t *clockSem;
 extern const char *clockSemName;
 
 extern pthread_mutex_t logMutex;
-extern pthread_mutex_t resourceTableMutex;
-
-extern ResourceDescriptor *resourceTable;
-
 extern int currentLogLevel;
-
-extern Queue resourceWaitQueue[MAX_RESOURCES];
-
-extern int available[MAX_RESOURCE_TYPES]; // Available resources of each type
-extern int maximum[MAX_PROCESSES]
-                  [MAX_RESOURCE_TYPES]; // Maximum demand of each process
-extern int allocation[MAX_PROCESSES]
-                     [MAX_RESOURCE_TYPES]; // Resources currently allocated to
-                                           // each process
-extern int need[MAX_PROCESSES]
-               [MAX_RESOURCE_TYPES]; // Remaining resource needs of each process
 
 extern int totalLaunched;
 
 extern pid_t timekeeperPid;
 extern pid_t tableprinterPid;
 
-#endif // GLOBALS_H
+extern int deadlockCheckInterval;
+
+typedef struct {
+  unsigned int lifespanSeconds;
+  unsigned int lifespanNanoSeconds;
+} WorkerConfig;
+
+#endif

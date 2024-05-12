@@ -1,16 +1,19 @@
 #include "arghandler.h"
 #include "globals.h"
 
+// Helper function to validate if a string is a positive integer
 int isNumber(const char *str) {
+  if (str == NULL)
+    return 0;
   char *end;
   long val = strtol(str, &end, 10);
   return *end == '\0' && val > 0 && val <= INT_MAX;
 }
 
+// Process the command-line arguments for OSS
 int ossArgs(int argc, char *argv[]) {
-  optind = 1; // Reset getopt's 'optind' to start for unit testing
+  optind = 1; // Reset getopt's 'optind' for unit testing or multiple parsing
   int opt;
-  int nFlag = 0, sFlag = 0, iFlag = 0, fFlag = 0; // Explicitly initialized
 
   while ((opt = getopt(argc, argv, "hn:s:i:f:")) != -1) {
     switch (opt) {
@@ -18,44 +21,36 @@ int ossArgs(int argc, char *argv[]) {
       printOSSUsage(argv[0]);
       return 1;
     case 'n':
-      if (optarg && isNumber(optarg)) {
-        maxProcesses = atoi(optarg);
-        nFlag = 1;
-      } else {
-        log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Invalid number for -n option.");
+      if (!isNumber(optarg)) {
+        log_message(LOG_LEVEL_ERROR, 0, "Invalid number of processes: %s",
+                    optarg);
         return ERROR_INVALID_ARGS;
       }
+      maxProcesses = atoi(optarg);
       break;
     case 's':
-      if (optarg && isNumber(optarg)) {
-        maxSimultaneous = atoi(optarg);
-        sFlag = 1;
-      } else {
-        log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Invalid number for -s option.");
+      if (!isNumber(optarg)) {
+        log_message(LOG_LEVEL_ERROR, 0,
+                    "Invalid number of simultaneous processes: %s", optarg);
         return ERROR_INVALID_ARGS;
       }
+      maxSimultaneous = atoi(optarg);
       break;
     case 'i':
-      if (optarg && isNumber(optarg)) {
-        launchInterval = atoi(optarg);
-        iFlag = 1;
-      } else {
-        log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Invalid number for -i option.");
+      if (!isNumber(optarg)) {
+        log_message(LOG_LEVEL_ERROR, 0, "Invalid interval: %s", optarg);
         return ERROR_INVALID_ARGS;
       }
+      launchInterval = atoi(optarg);
       break;
     case 'f':
-      if (optarg) {
-        strncpy(logFileName, optarg, sizeof(logFileName) - 1);
-        logFileName[sizeof(logFileName) - 1] = '\0';
-        fFlag = 1;
-      } else {
-        log_message(LOG_LEVEL_ERROR,
-                    "[OSS] Error: Missing filename for -f option.");
-        return ERROR_INVALID_ARGS;
+      strncpy(logFileName, optarg, sizeof(logFileName) - 1);
+      logFileName[sizeof(logFileName) - 1] = '\0';
+      logFile = fopen(logFileName, "w+");
+      if (!logFile) {
+        log_message(LOG_LEVEL_ERROR, 0, "Failed to open log file: %s",
+                    logFileName);
+        return ERROR_FILE_OPEN;
       }
       break;
     default:
@@ -64,26 +59,35 @@ int ossArgs(int argc, char *argv[]) {
     }
   }
 
-  if (!nFlag || !sFlag || !iFlag || !fFlag) {
-    log_message(LOG_LEVEL_ERROR, "[OSS] Error: Missing required options.");
-    return ERROR_INVALID_ARGS;
-  }
+  log_message(LOG_LEVEL_INFO, 0,
+              "OSS configured with maxProcesses: %d, maxSimultaneous: %d, "
+              "launchInterval: %d, logFileName: %s",
+              maxProcesses, maxSimultaneous, launchInterval, logFileName);
 
-  logFile = fopen(logFileName, "w+");
-  if (!logFile) {
-    log_message(LOG_LEVEL_ERROR, "[OSS] Failed to open log file.");
-    return ERROR_FILE_OPEN;
-  }
-
-  log_message(LOG_LEVEL_INFO, "[OSS] Debug Info:");
-  log_message(LOG_LEVEL_INFO, "\tMax Processes: %d", maxProcesses);
-  log_message(LOG_LEVEL_INFO, "\tMax Simultaneous: %d", maxSimultaneous);
-  log_message(LOG_LEVEL_INFO, "\tLaunch Interval: %d ms", launchInterval);
-  log_message(LOG_LEVEL_INFO, "\tLog File: %s", logFileName);
-
-  return 0;
+  return 0; // Success
 }
 
+// Print the usage information
+void printOSSUsage(const char *programName) {
+  log_message(LOG_LEVEL_INFO, 0,
+              "Usage: %s -n <num_procs> -s <simul_procs> -i <interval_ms> -f "
+              "<log_filename>",
+              programName);
+  log_message(LOG_LEVEL_INFO, 0, "Options:");
+  log_message(LOG_LEVEL_INFO, 0,
+              "  -n <num_procs>    Number of total child processes to spawn.");
+  log_message(
+      LOG_LEVEL_INFO, 0,
+      "  -s <simul_procs>  Number of child processes to spawn simultaneously.");
+  log_message(
+      LOG_LEVEL_INFO, 0,
+      "  -i <interval_ms>  Interval in milliseconds to launch children.");
+  log_message(LOG_LEVEL_INFO, 0,
+              "  -f <log_filename> Logfile name for OSS output.");
+  log_message(LOG_LEVEL_INFO, 0, "  -h                Show this help message.");
+}
+
+/*
 int workerArgs(int argc, char *argv[], WorkerConfig *config) {
   if (argc != 3 || !isNumber(argv[1]) || !isNumber(argv[2])) {
     return ERROR_INVALID_ARGS;
@@ -92,16 +96,4 @@ int workerArgs(int argc, char *argv[], WorkerConfig *config) {
   config->lifespanNanoSeconds = atoi(argv[2]);
   return SUCCESS;
 }
-
-void printOSSUsage(const char *programName) {
-  printf("Usage: %s [OPTIONS]\n", programName);
-  puts("Options:");
-  puts("  -n <value>   Number of total child processes to spawn.");
-  puts("  -s <value>   Number of child processes to spawn simultaneously.");
-  puts("  -i <value>   Interval in ms to launch children.");
-  puts("  -f <filename>  Logfile name for OSS output.");
-  puts("  -h           Show this help message.");
-  puts("\nDescription:");
-  puts("  This program simulates an operating system scheduler");
-  puts("  using message queues and shared memory.");
-}
+*/

@@ -63,12 +63,12 @@ void setupSignalHandlers(void) {
 
 int better_sem_wait(sem_t *sem) {
   int result;
-  log_message(LOG_LEVEL_ANNOY, "Attempting to acquire semaphore...");
+  log_message(LOG_LEVEL_ANNOY, 0, "Attempting to acquire semaphore...");
   result = sem_wait(sem);
   if (result == 0) {
-    log_message(LOG_LEVEL_ANNOY, "Semaphore acquired successfully.");
+    log_message(LOG_LEVEL_ANNOY, 0, "Semaphore acquired successfully.");
   } else {
-    log_message(LOG_LEVEL_ERROR, "Failed to acquire semaphore.");
+    log_message(LOG_LEVEL_ERROR, 0, "Failed to acquire semaphore.");
   }
   return result;
 }

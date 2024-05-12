@@ -35,9 +35,6 @@ volatile sig_atomic_t keepRunning = 1; // Flag to control system running state
 // System limits and settings
 int childTimeLimit = DEFAULT_CHILD_TIME_LIMIT; // Time limit for child processes
 
-int maxDemand[MAX_USER_PROCESSES]
-             [MAX_RESOURCES]; // Matrix for maximum demand of resources
-
 int currentChildren = 0; // Current number of child processes
 
 int currentLogLevel = LOG_LEVEL_DEBUG; // Current log level
@@ -46,18 +43,10 @@ sem_t *clockSem = SEM_FAILED; // Semaphore for clock synchronization
 const char *clockSemName = "/simClockSem"; // Name of the clock semaphore
 
 pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for logging
-pthread_mutex_t resourceTableMutex =
-    PTHREAD_MUTEX_INITIALIZER; // Mutex for resource table
-
-ResourceDescriptor *resourceTable = NULL;
-Queue resourceWaitQueue[MAX_RESOURCES];
-
-int available[MAX_RESOURCE_TYPES];
-int allocation[MAX_PROCESSES][MAX_RESOURCE_TYPES];
-int need[MAX_PROCESSES][MAX_RESOURCE_TYPES];
-int maximum[MAX_PROCESSES][MAX_RESOURCES];
 
 int totalLaunched = 0;
 
 pid_t timekeeperPid = 0;
 pid_t tableprinterPid = 0;
+
+int deadlockCheckInterval = 1000;

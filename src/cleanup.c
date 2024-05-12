@@ -1,4 +1,9 @@
 #include "cleanup.h"
+#include "globals.h"
+#include "process.h"
+#include "shared.h"
+
+#include <stdlib.h>
 
 volatile sig_atomic_t cleanupInitiated = 0;
 
@@ -12,7 +17,7 @@ int semUnlinkCreate(void) {
     return -1;
   }
 
-  log_message(LOG_LEVEL_INFO, "Semaphore created successfully.");
+  log_message(LOG_LEVEL_INFO, 0, "Semaphore created successfully.");
   return 0;
 }
 
@@ -21,12 +26,12 @@ void cleanupResources(void) {
     return; // Prevent double cleanup
   cleanupInitiated = 1;
 
-  log_message(LOG_LEVEL_INFO, "Cleaning up resources...");
+  log_message(LOG_LEVEL_INFO, 0, "Cleaning up resources...");
 
   if (msqId != -1) {
     msgctl(msqId, IPC_RMID, NULL);
     msqId = -1;
-    log_message(LOG_LEVEL_INFO, "Message queue removed successfully.");
+    log_message(LOG_LEVEL_INFO, 0, "Message queue removed successfully.");
   }
 
   sendSignalToChildGroups(SIGTERM); // Terminate child processes
@@ -50,40 +55,18 @@ void cleanupResources(void) {
   cleanupSharedMemorySegment(processTableShmId, "Process Table");
   cleanupSharedMemorySegment(resourceTableShmId, "Resource Table");
 
-  log_message(LOG_LEVEL_INFO, "Cleanup completed.");
+  log_message(LOG_LEVEL_INFO, 0, "Cleanup completed.");
 }
 
 void cleanupSharedMemorySegment(int shmId, const char *segmentName) {
   if (shmId >= 0) {
     shmctl(shmId, IPC_RMID, NULL); // Mark the segment for deletion
-    log_message(LOG_LEVEL_INFO, "%s shared memory segment marked for deletion.",
-                segmentName);
+    log_message(LOG_LEVEL_INFO, 0,
+                "%s shared memory segment marked for deletion.", segmentName);
   }
 }
 
 void cleanupAndExit(void) {
   cleanupResources();
   exit(EXIT_SUCCESS);
-}
-
-pid_t forkAndExecute(const char *executable) {
-  pid_t pid = fork();
-  if (pid == 0) {
-    execl(executable, executable, (char *)NULL);
-    perror("Failed to execute child process");
-    exit(EXIT_FAILURE);
-  } else if (pid < 0) {
-    perror("Failed to fork child process");
-    exit(EXIT_FAILURE);
-  }
-  return pid;
-}
-
-void sendSignalToChildGroups(int sig) {
-  if (timekeeperPid > 0) {
-    kill(-timekeeperPid, sig);
-  }
-  if (tableprinterPid > 0) {
-    kill(-tableprinterPid, sig);
-  }
 }
