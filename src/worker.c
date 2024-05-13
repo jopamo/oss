@@ -1,91 +1,77 @@
+#include "globals.h"
+#include "init.h"
 #include "shared.h"
+#include "timeutils.h"
 #include "user_process.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/ipc.h>
-#include <sys/msg.h>
-#include <time.h>
-#include <unistd.h>
 
-#define BOUND_B                                                                \
-  500000000 // Upper boundary for random decision-making in nanoseconds
-#define REQUEST_PROBABILITY                                                    \
-  80 // Probability percentage of requesting resources over releasing
+#define B 250000000L // Upper bound in nanoseconds for random timing
+#define TERMINATION_CHECK_INTERVAL 1000000000L // Check termination every second
+#define REQUEST_PROBABILITY 99 // Probability of requesting vs releasing
 
-// Main process loop for worker
 int main(void) {
   gProcessType = PROCESS_TYPE_WORKER;
   initializeSharedResources();
   setupSignalHandlers();
 
-  srand(time(NULL) ^ (getpid() << 16)); // Seed the random number generator
+  unsigned long lastActionTimeSec = simClock->seconds;
+  unsigned long lastActionTimeNano = simClock->nanoseconds;
+  unsigned long lastCheckSec = simClock->seconds; // Initialize last check time
 
-  int msqid = initMessageQueue();
-  if (msqid == -1) {
-    fprintf(stderr, "Failed to initialize message queue\n");
-    exit(EXIT_FAILURE);
-  }
-
-  int resources[MAX_RESOURCE_TYPES] = {
-      0}; // Track resources held by this process
-  time_t lastActionTime = time(NULL), currentTime;
+  log_message(LOG_LEVEL_DEBUG, 0, "Worker process started with PID %d",
+              getpid());
 
   while (keepRunning) {
-    currentTime = time(NULL);
+    better_sem_wait(clockSem); // Lock semaphore to safely read time
+    unsigned long currentSec = simClock->seconds;
+    unsigned long currentNano = simClock->nanoseconds;
+    better_sem_post(clockSem); // Unlock semaphore after reading time
 
-    // Enforcing a minimum runtime before termination check
-    if (difftime(currentTime, lastActionTime) >= 0.25) { // Act every 250ms
-      lastActionTime = currentTime;
-      int decision = rand() % 100;
-      int resourceType =
-          rand() % MAX_RESOURCE_TYPES; // Assuming MAX_RESOURCE_TYPES is defined
+    unsigned long elapsedNano = (currentSec - lastActionTimeSec) * 1000000000L +
+                                (currentNano - lastActionTimeNano);
+
+    if (elapsedNano >=
+        (unsigned long)(rand() % B)) { // Use B as the bound for actions
+      lastActionTimeSec = currentSec;
+      lastActionTimeNano = currentNano;
+
+      int decision =
+          rand() % 100; // Decide whether to request or release a resource
       int action = (decision < REQUEST_PROBABILITY) ? REQUEST_RESOURCE
                                                     : RELEASE_RESOURCE;
 
       MessageA5 msg = {
           .senderPid = getpid(),
           .commandType = action,
-          .resourceType = resourceType,
-          .count = 1 // Always request or release one unit at a time
+          .count = 1 // Always request or release one unit
       };
 
-      if (action == REQUEST_RESOURCE &&
-          resources[resourceType] < MAX_INSTANCES_PER_RESOURCE) {
-        if (sendMessage(msqid, &msg, sizeof(msg)) == -1) {
-          fprintf(stderr, "Failed to send request message\n");
-          exit(EXIT_FAILURE);
-        }
-        resources[resourceType]++;
-      } else if (action == RELEASE_RESOURCE && resources[resourceType] > 0) {
-        if (sendMessage(msqid, &msg, sizeof(msg)) == -1) {
-          fprintf(stderr, "Failed to send release message\n");
-          exit(EXIT_FAILURE);
-        }
-        resources[resourceType]--;
+      if (sendMessage(msqId, &msg, sizeof(msg)) == 0) {
+        log_message(LOG_LEVEL_INFO, 0, "Worker %d: Successfully %sed resource",
+                    getpid(),
+                    action == REQUEST_RESOURCE ? "request" : "release");
+      } else {
+        log_message(LOG_LEVEL_ERROR, 0,
+                    "Worker %d: Failed to send message for %s resource",
+                    getpid(),
+                    action == REQUEST_RESOURCE ? "requesting" : "releasing");
       }
     }
 
-    // Check if it should terminate after at least 1 second runtime
-    if (difftime(currentTime, lastActionTime) > 1 &&
-        (rand() % 100 < 10)) { // 10% chance to try to terminate every 250ms
-      keepRunning = 0;
-      break;
+    if ((currentSec - lastCheckSec) >=
+        1) { // Check if it's time to possibly terminate
+      lastCheckSec = currentSec;
+      if ((rand() % 100) < 10) { // 10% chance to decide to terminate
+        log_message(LOG_LEVEL_INFO, 0, "Worker %d: Deciding to terminate",
+                    getpid());
+        keepRunning = 0;
+      }
     }
+
+    usleep(10000); // Sleep for 10ms to reduce CPU usage
   }
 
-  // Release all resources held before exiting
-  for (int i = 0; i < MAX_RESOURCE_TYPES; i++) {
-    if (resources[i] > 0) {
-      MessageA5 msg = {.senderPid = getpid(),
-                       .commandType = RELEASE_RESOURCE,
-                       .resourceType = i,
-                       .count = resources[i]};
-      sendMessage(msqid, &msg,
-                  sizeof(msg)); // No need to check for errors in cleanup phase
-    }
-  }
-
-  // Clean up before exiting
   cleanupSharedResources();
+  log_message(LOG_LEVEL_INFO, 0, "Worker %d: Exiting and cleaning up resources",
+              getpid());
   return EXIT_SUCCESS;
 }

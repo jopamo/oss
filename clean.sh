@@ -21,7 +21,7 @@ terminate_processes() {
 	done
 }
 
-terminate_processes "oss"
+terminate_processes "psmgmt"
 terminate_processes "worker"
 terminate_processes "timekeeper"
 terminate_processes "tableprinter"

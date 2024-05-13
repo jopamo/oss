@@ -1,7 +1,4 @@
 #include "shared.h"
-#include "globals.h"
-#include "resource.h"
-#include "user_process.h"
 
 int getCurrentChildren(void) { return currentChildren; }
 
@@ -11,11 +8,11 @@ void *attachSharedMemory(const char *path, int proj_id, size_t size,
                          const char *segmentName) {
   key_t key = getSharedMemoryKey(path, proj_id);
   log_message(
-      LOG_LEVEL_INFO, 0,
+      LOG_LEVEL_DEBUG, 0,
       "Attempting to create or connect to shared memory for %s with key %d",
       segmentName, key);
 
-  int shmId = shmget(key, size, 0666 | IPC_CREAT);
+  int shmId = shmget(key, size, SHM_PERMISSIONS | IPC_CREAT);
   if (shmId < 0) {
     log_message(LOG_LEVEL_ERROR, 0, "Failed to obtain shmId for %s due to: %s",
                 segmentName, strerror(errno));
@@ -30,7 +27,7 @@ void *attachSharedMemory(const char *path, int proj_id, size_t size,
     return NULL;
   }
 
-  log_message(LOG_LEVEL_INFO, 0,
+  log_message(LOG_LEVEL_DEBUG, 0,
               "Successfully attached to shared memory for %s", segmentName);
   return shmPtr;
 }
@@ -50,18 +47,18 @@ int detachSharedMemory(void **shmPtr, const char *segmentName) {
   }
 
   *shmPtr = NULL; // Clear the pointer
-  log_message(LOG_LEVEL_INFO, 0, "Successfully detached from %s shared memory.",
-              segmentName);
+  log_message(LOG_LEVEL_DEBUG, 0,
+              "Successfully detached from %s shared memory.", segmentName);
   return 0;
 }
 
 // Converts the process type enum to a readable string
 const char *processTypeToString(ProcessType type) {
   switch (type) {
-  case PROCESS_TYPE_OSS:
-    return "OSS";
+  case PROCESS_TYPE_PSMGMT:
+    return "psmgmt";
   case PROCESS_TYPE_WORKER:
-    return "Worker";
+    return "worker";
   default:
     return "Unknown";
   }
@@ -107,7 +104,7 @@ key_t getSharedMemoryKey(const char *path, int proj_id) {
     log_message(LOG_LEVEL_ERROR, 0, "ftok failed for proj_id %d: %s", proj_id,
                 strerror(errno));
   } else {
-    log_message(LOG_LEVEL_INFO, 0,
+    log_message(LOG_LEVEL_DEBUG, 0,
                 "ftok success for proj_id %d: Key generated: %d", proj_id, key);
   }
   return key;
@@ -139,61 +136,46 @@ int sendMessage(int msqId, const void *msg, size_t msgSize) {
   return 0;
 }
 
-// Receive a generic message using a void pointer
 int receiveMessage(int msqId, void *msg, size_t msgSize, long msgType,
                    int flags) {
-  better_sem_wait(clockSem); // Synchronize access to shared resources
-
-  ssize_t result = msgrcv(msqId, msg, msgSize - sizeof(long), msgType,
-                          flags); // Correct size minus mtype
-  if (result == -1) {
-    log_message(LOG_LEVEL_ERROR, 0,
-                "[RECEIVE] Error: Failed to receive message. msqId: %d, "
-                "Expected Type: %ld, Error: %s (%d)",
-                msqId, msgType, strerror(errno), errno);
-    sem_post(clockSem);
-    return -1;
+  if (better_sem_wait(clockSem) == 0) {
+    ssize_t result = msgrcv(msqId, msg, msgSize - sizeof(long), msgType, flags);
+    if (result == -1) {
+      if (errno == ENOMSG) { // No message of the desired type was found
+        log_message(LOG_LEVEL_DEBUG, 0,
+                    "[RECEIVE] Info: No message of desired type available. "
+                    "Continuing.");
+        better_sem_post(clockSem);
+        return -1;
+      }
+      log_message(LOG_LEVEL_ERROR, 0,
+                  "[RECEIVE] Error: Failed to receive message. msqId: %d, "
+                  "Expected Type: %ld, Error: %s (%d)",
+                  msqId, msgType, strerror(errno), errno);
+      better_sem_post(clockSem);
+      return -1;
+    }
+    log_message(LOG_LEVEL_DEBUG, 0,
+                "[RECEIVE] Success: Message received. msqId: %d, Type: %ld, "
+                "Size: %ld bytes",
+                msqId, msgType, result);
+    better_sem_post(clockSem);
+    return 0;
   }
-
-  log_message(LOG_LEVEL_DEBUG, 0,
-              "[RECEIVE] Success: Message received. msqId: %d, Type: %ld",
-              msqId, msgType);
-  sem_post(clockSem);
-  return 0;
-}
-
-void handleMessagesA5(int msqId, long senderPid, int commandType,
-                      int resourceType, int count) {
-  MessageA5 msg = {.senderPid = senderPid,
-                   .commandType = commandType,
-                   .resourceType = resourceType,
-                   .count = count};
-
-  if (sendMessage(msqId, &msg, sizeof(msg)) != 0) {
-    log_message(LOG_LEVEL_ERROR, 0, "Failed to send MessageA5.");
-  }
-
-  if (receiveMessage(msqId, &msg, sizeof(msg), msg.senderPid, IPC_NOWAIT) !=
-      0) {
-    log_message(LOG_LEVEL_ERROR, 0, "Failed to receive MessageA5.");
-  }
+  return -1;
 }
 
 void cleanupSharedResources(void) {
-  printf("Starting %s.\n", __func__);
+  log_message(LOG_LEVEL_DEBUG, 0, "Starting %s.", __func__);
 
-  if (sem_wait(clockSem) != 0) {
-    log_message(LOG_LEVEL_ERROR, 0, "Failed to acquire semaphore in %s: %s",
-                __func__, strerror(errno));
-    return; // Early exit if cannot lock semaphore
-  }
+  better_sem_wait(clockSem);
 
   if (simClock) {
     if (detachSharedMemory((void **)&simClock, "Simulated Clock") != 0) {
       log_message(LOG_LEVEL_ERROR, 0,
                   "Failed to detach Simulated Clock shared memory.");
     } else {
-      log_message(LOG_LEVEL_INFO, 0,
+      log_message(LOG_LEVEL_DEBUG, 0,
                   "Detached from Simulated Clock shared memory.");
       simClock = NULL;
     }
@@ -204,13 +186,13 @@ void cleanupSharedResources(void) {
       log_message(LOG_LEVEL_ERROR, 0,
                   "Failed to detach Actual Time shared memory.");
     } else {
-      log_message(LOG_LEVEL_INFO, 0,
+      log_message(LOG_LEVEL_DEBUG, 0,
                   "Detached from Actual Time shared memory.");
       actualTime = NULL;
     }
   }
 
-  if (sem_post(clockSem) != 0) {
+  if (better_sem_post(clockSem) != 0) {
     log_message(LOG_LEVEL_ERROR, 0, "Failed to release semaphore in %s: %s",
                 __func__, strerror(errno));
   }

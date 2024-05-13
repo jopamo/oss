@@ -19,8 +19,33 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define MSG_REQUEST_RESOURCE 1
+#define MSG_RELEASE_RESOURCE 0
+
+#define REQUEST_INTERVAL_NANOSECONDS 500000000 // Half a second in nanoseconds
+
+#define HALF_SECOND 500000000L // 500 milliseconds in nanoseconds
+#define ONE_SECOND 1000000000L // One second in nanoseconds
+
+// absolute maximums
 #define MAX_PROCESSES 100
-#define MAX_USER_PROCESSES 18
+#define MAX_SIMULTANEOUS 18
+#define MAX_RESOURCES 100
+#define MAX_INSTANCES 50
+#define MAX_RESOURCE_TYPES 10
+
+// default values assigned to variables
+#define DEFAULT_MAX_RESOURCES 10
+#define DEFAULT_MAX_PROCESSES 50
+#define DEFAULT_MAX_SIMULTANEOUS 8
+#define DEFAULT_MAX_INSTANCES 20
+
+#define DEFAULT_CHILD_TIME_LIMIT 10
+#define DEFAULT_LAUNCH_INTERVAL 1000
+#define DEFAULT_LOG_FILE_NAME "psmgmt.log"
+
+#define MAX_RUNTIME 60
+#define TIMEKEEPER_SIM_SPEED_FACTOR 0.04
 
 #define MSG_PATH "/tmp"
 #define MSG_PROJ_ID 'a'
@@ -32,41 +57,29 @@
 #define SHM_PROJ_ID_RESOURCE_TABLE 'R'
 #define SHM_PROJ_ID_DEADLOCK 'D'
 
-#define SEM_PERMISSIONS 0600
+#define SEM_PERMISSIONS 0666
+#define MSQ_PERMISSIONS 0666
+#define SHM_PERMISSIONS 0666
 
-#define MAX_RUNTIME 30
-#define TIMEKEEPER_SIM_SPEED_FACTOR 0.28
-
-#define DEFAULT_MAX_PROCESSES 8
-#define DEFAULT_MAX_SIMULTANEOUS 10
-#define DEFAULT_CHILD_TIME_LIMIT 10
-#define DEFAULT_LAUNCH_INTERVAL 1000
-#define DEFAULT_LOG_FILE_NAME "oss.log"
-
+// Log levels
 #define LOG_LEVEL_ANNOY 0
 #define LOG_LEVEL_DEBUG 1
 #define LOG_LEVEL_INFO 2
 #define LOG_LEVEL_WARN 3
 #define LOG_LEVEL_ERROR 4
 
+// Error codes
 #define SUCCESS 0
 #define ERROR_INVALID_ARGS -64
 #define ERROR_INIT_QUEUE -65
 #define ERROR_INIT_SHM -66
-#define ERROR_FILE_OPEN -67
+#define ERROR_INIT_MSQ -67
+#define ERROR_FILE_OPEN -68
 
+// Time conversions
 #define NANOSECONDS_IN_SECOND 1000000000
 
 #define LOG_BUFFER_SIZE 1024
-
-#define QUEUE_COUNT 3
-#define TIME_QUANTUM_BASE 10
-
-#define MESSAGE_TYPE_SCHEDULE 1
-#define MESSAGE_TYPE_TERMINATE 2
-#define MESSAGE_TYPE_BLOCKED 3
-#define MESSAGE_TYPE_RELEASE 4
-#define MESSAGE_TYPE_REQUEST 5
 
 typedef struct {
   unsigned long seconds;
@@ -85,42 +98,24 @@ typedef struct PCB {
   int state;
 } PCB;
 
-typedef struct {
-  pid_t *queue;
-  int front, rear;
-  int capacity;
-} Queue;
-
-typedef struct {
-  Queue highPriority;
-  Queue midPriority;
-  Queue lowPriority;
-} MLFQ;
-
 typedef enum { LOG_DEBUG, LOG_INFO, LOG_WARN, LOG_ERROR } LogLevel;
 
-typedef enum {
-  PROCESS_TYPE_OSS,
-  PROCESS_TYPE_WORKER,
-  PROCESS_TYPE_TABLEPRINTER,
-  PROCESS_TYPE_TIMEKEEPER
-} ProcessType;
+typedef enum { PROCESS_TYPE_PSMGMT, PROCESS_TYPE_WORKER } ProcessType;
 
+extern int maxResources;
 extern int maxProcesses;
 extern int maxSimultaneous;
+extern int maxInstances;
 extern int launchInterval;
 extern char logFileName[256];
 extern FILE *logFile;
 
-extern MLFQ mlfq;
-
 extern PCB *processTable;
-extern Queue queues[QUEUE_COUNT];
+extern pthread_mutex_t processTableMutex;
 
 extern int logLevel;
 extern ProcessType gProcessType;
 
-extern struct timeval startTime;
 extern struct timeval lastLogTime;
 extern SimulatedClock *simClock;
 extern ActualTime *actualTime;
@@ -144,15 +139,5 @@ extern pthread_mutex_t logMutex;
 extern int currentLogLevel;
 
 extern int totalLaunched;
-
-extern pid_t timekeeperPid;
-extern pid_t tableprinterPid;
-
-extern int deadlockCheckInterval;
-
-typedef struct {
-  unsigned int lifespanSeconds;
-  unsigned int lifespanNanoSeconds;
-} WorkerConfig;
 
 #endif

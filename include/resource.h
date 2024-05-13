@@ -2,55 +2,38 @@
 #define RESOURCE_H
 
 #include "globals.h"
+#include "process.h"
 #include "shared.h"
+#include "user_process.h"
 
-#define MSG_REQUEST_RESOURCE 1
-#define MSG_RELEASE_RESOURCE 0
+void releaseAllResourcesForProcess(int pid);
 
-#define MAX_RESOURCES 10
-#define INSTANCES_PER_RESOURCE 20
-#define MAX_RESOURCE_TYPES 10
-#define REQUEST_INTERVAL_NANOSECONDS 500000000 // Half a second in nanoseconds
-
+// Defines the structure for a resource descriptor
 typedef struct {
-  int total;
-  int available;
-  int allocated[MAX_USER_PROCESSES];
-  int availableAfter[MAX_RESOURCES];
+  int total;     // Total units of the resource available in the system
+  int available; // Units currently available for allocation
+  int allocated[MAX_INSTANCES]; // Array tracking units allocated to each
+                                // process
 } ResourceDescriptor;
 
+// Enum for different types of actions that can be requested by processes
 typedef enum {
-  REQUEST_RESOURCE,
-  RELEASE_RESOURCE,
-  TERMINATE_PROCESS
+  REQUEST_RESOURCE, // Request for a resource allocation
+  RELEASE_RESOURCE, // Release of a resource
+  TERMINATE_PROCESS // Signal to terminate a process
 } ActionType;
 
 extern pthread_mutex_t resourceTableMutex;
-
 extern ResourceDescriptor *resourceTable;
 
-extern Queue resourceWaitQueue[MAX_RESOURCES];
-
-void log_resource_state(const char *operation, int pid, int resourceType,
-                        int quantity, int availableBefore, int availableAfter);
-int requestResource(int resourceType, int quantity, int pid);
-int releaseResource(int resourceType, int quantity, int pid);
-
+void log_resource_state(const char *operation, int pid, int total,
+                        int available);
+int requestResource(int pid);
+int releaseResource(int pid);
+void releaseResources(int pid);
 int initializeResourceTable(void);
-int initializeResourceDescriptors(ResourceDescriptor *rd);
-
 bool unsafeSystem(void);
 void resolveDeadlocks(void);
+void logResourceTable(void);
 
-void releaseResources(int pid, int resourceType, int quantity);
-int getAvailable(int resourceType);
-int getAvailableAfter(int resourceType);
-int initializeResourceTable(void);
-
-int isSystemSafe();
-
-void releaseAllResourcesForProcess(pid_t pid);
-
-bool canProcessFinish(int process, int available[]);
-
-#endif
+#endif // RESOURCE_H

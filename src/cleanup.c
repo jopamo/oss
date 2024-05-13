@@ -1,23 +1,25 @@
 #include "cleanup.h"
-#include "globals.h"
-#include "process.h"
-#include "shared.h"
 
 #include <stdlib.h>
 
 volatile sig_atomic_t cleanupInitiated = 0;
 
 int semUnlinkCreate(void) {
-  const char *sem_name = clockSemName; // Semaphore name
-  sem_unlink(sem_name);                // Try to unlink existing semaphore
-
-  clockSem = sem_open(sem_name, O_CREAT | O_EXCL, SEM_PERMISSIONS, 1);
-  if (clockSem == SEM_FAILED) {
-    perror("Failed to create semaphore");
+  const char *sem_name = clockSemName;
+  if (sem_unlink(sem_name) == -1 && errno != ENOENT) {
+    log_message(LOG_LEVEL_ERROR, 0, "Failed to unlink semaphore: %s",
+                strerror(errno));
     return -1;
   }
 
-  log_message(LOG_LEVEL_INFO, 0, "Semaphore created successfully.");
+  clockSem = sem_open(sem_name, O_CREAT | O_EXCL, SEM_PERMISSIONS, 1);
+  if (clockSem == SEM_FAILED) {
+    log_message(LOG_LEVEL_ERROR, 0, "Failed to create semaphore: %s",
+                strerror(errno));
+    return -1;
+  }
+
+  log_message(LOG_LEVEL_DEBUG, 0, "Semaphore created successfully.");
   return 0;
 }
 
@@ -26,15 +28,13 @@ void cleanupResources(void) {
     return; // Prevent double cleanup
   cleanupInitiated = 1;
 
-  log_message(LOG_LEVEL_INFO, 0, "Cleaning up resources...");
+  log_message(LOG_LEVEL_DEBUG, 0, "Cleaning up resources...");
 
   if (msqId != -1) {
     msgctl(msqId, IPC_RMID, NULL);
     msqId = -1;
-    log_message(LOG_LEVEL_INFO, 0, "Message queue removed successfully.");
+    log_message(LOG_LEVEL_DEBUG, 0, "Message queue removed successfully.");
   }
-
-  sendSignalToChildGroups(SIGTERM); // Terminate child processes
 
   // Cleanup semaphores
   if (clockSem != SEM_FAILED) {
@@ -55,18 +55,19 @@ void cleanupResources(void) {
   cleanupSharedMemorySegment(processTableShmId, "Process Table");
   cleanupSharedMemorySegment(resourceTableShmId, "Resource Table");
 
-  log_message(LOG_LEVEL_INFO, 0, "Cleanup completed.");
+  log_message(LOG_LEVEL_DEBUG, 0, "Cleanup completed.");
 }
 
 void cleanupSharedMemorySegment(int shmId, const char *segmentName) {
   if (shmId >= 0) {
     shmctl(shmId, IPC_RMID, NULL); // Mark the segment for deletion
-    log_message(LOG_LEVEL_INFO, 0,
+    log_message(LOG_LEVEL_DEBUG, 0,
                 "%s shared memory segment marked for deletion.", segmentName);
   }
 }
 
 void cleanupAndExit(void) {
+  cleanupSharedResources();
   cleanupResources();
   exit(EXIT_SUCCESS);
 }

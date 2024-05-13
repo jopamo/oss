@@ -2,6 +2,7 @@
 #include "globals.h"
 #include "init.h"
 #include "process.h"
+#include "queue.h"
 #include "shared.h"
 #include "unity.c"
 #include "unity.h"
@@ -11,11 +12,20 @@ int mock_shmget_id = 4567;
 void *mock_shmaddr = (void *)12345678;
 
 void setUp(void) {
+  maxProcesses = DEFAULT_MAX_PROCESSES;
+  maxResources = DEFAULT_MAX_RESOURCES;
+  maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
+  launchInterval = DEFAULT_LAUNCH_INTERVAL;
+  strcpy(logFileName, DEFAULT_LOG_FILE_NAME);
+
   semUnlinkCreate();
   initializeSharedResources();
 }
 
-void tearDown(void) { cleanupSharedResources(); }
+void tearDown(void) {
+  cleanupSharedResources();
+  cleanupResources();
+}
 
 void test_attachSharedMemory(void) {
   void *memory = attachSharedMemory("/somepath", 1, 1024, "TestSegment");

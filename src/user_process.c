@@ -1,6 +1,6 @@
 #include "user_process.h"
-#include "globals.h"
-#include "shared.h"
+
+#define MAX_RETRY_COUNT 10
 
 void signalSafeLog(int level, const char *message) {
   if (level < currentLogLevel) {
@@ -62,13 +62,88 @@ void setupSignalHandlers(void) {
 }
 
 int better_sem_wait(sem_t *sem) {
+  if (!sem) {
+    log_message(LOG_LEVEL_ERROR, 0, "Invalid semaphore pointer provided.");
+    return -1;
+  }
+
   int result;
   log_message(LOG_LEVEL_ANNOY, 0, "Attempting to acquire semaphore...");
-  result = sem_wait(sem);
+  while ((result = sem_wait(sem)) == -1 && errno == EINTR) {
+    log_message(LOG_LEVEL_WARN, 0,
+                "Semaphore wait was interrupted. Retrying...");
+    continue; // Handle interruption by signals and retry
+  }
   if (result == 0) {
     log_message(LOG_LEVEL_ANNOY, 0, "Semaphore acquired successfully.");
   } else {
-    log_message(LOG_LEVEL_ERROR, 0, "Failed to acquire semaphore.");
+    log_message(LOG_LEVEL_ERROR, 0, "Failed to acquire semaphore: %s",
+                strerror(errno));
   }
   return result;
+}
+
+int better_sem_post(sem_t *sem) {
+  if (sem_post(sem) == -1) {
+    switch (errno) {
+    case EINVAL:
+      log_message(LOG_LEVEL_ERROR, 0,
+                  "Failed to release semaphore: The semaphore is invalid.");
+      break;
+    case EOVERFLOW:
+      log_message(
+          LOG_LEVEL_ERROR, 0,
+          "Failed to release semaphore: The semaphore value would overflow.");
+      break;
+    default:
+      log_message(LOG_LEVEL_ERROR, 0,
+                  "Failed to release semaphore: Unknown error %s",
+                  strerror(errno));
+    }
+    return -1;
+  }
+  log_message(LOG_LEVEL_ANNOY, 0, "Semaphore released successfully.");
+  return 0;
+}
+
+int better_sleep(time_t sec, long nsec) {
+  struct timespec req = {sec, nsec}, rem;
+  while (nanosleep(&req, &rem) == -1 && errno == EINTR) {
+    log_message(LOG_LEVEL_WARN, 0,
+                "Sleep interrupted. Sleeping again for remaining time...");
+    req = rem; // Continue sleeping for the remaining time
+  }
+  if (errno != EINTR) {
+    log_message(LOG_LEVEL_ANNOY, 0, "Sleep completed successfully.");
+    return 0;
+  } else {
+    log_message(LOG_LEVEL_ERROR, 0, "Failed to complete sleep: %s",
+                strerror(errno));
+    return -1;
+  }
+}
+
+int better_mlock(const void *addr, size_t len) {
+  if (mlock(addr, len) == 0) {
+    log_message(LOG_LEVEL_ANNOY, 0, "Memory locked successfully.");
+    return 0;
+  } else {
+    log_message(LOG_LEVEL_ERROR, 0, "Failed to lock memory: %s",
+                strerror(errno));
+    return -1;
+  }
+}
+
+void *safe_shmat(int shmId, const void *shmaddr, int shmflg) {
+  void *addr;
+  int retries = 5;
+  while (retries--) {
+    addr = shmat(shmId, shmaddr, shmflg);
+    if (addr == (void *)-1 && errno == EINTR && retries) {
+      log_message(LOG_LEVEL_WARN, 0, "shmat interrupted, retrying...");
+      continue;
+    }
+    break;
+  }
+  return addr;
 }

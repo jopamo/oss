@@ -1,13 +1,22 @@
-#ifndef RESOURCE_H
-#define RESOURCE_H
+#ifndef QUEUE_H
+#define QUEUE_H
 
 #include "globals.h"
+#include "resource.h"
 #include "shared.h"
-#include "user_process.h"
+
+typedef struct {
+  MessageA5 *queue;
+  int front;
+  int rear;
+  int capacity;
+} Queue;
+
+extern Queue resourceQueues[MAX_RESOURCES];
 
 int initQueue(Queue *q, int capacity);
 void freeQueue(Queue *q);
-int initializeQueues(MLFQ *mlfq);
-void freeQueues(MLFQ *mlfq);
+void enqueue(Queue *q, MessageA5 item);
+int dequeue(Queue *q, MessageA5 *item);
 
 #endif

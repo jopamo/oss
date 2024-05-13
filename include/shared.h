@@ -19,11 +19,14 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "globals.h"
+#include "user_process.h"
+
 typedef struct {
-  long senderPid;   // Message type, used for routing (e.g., process ID)
-  int commandType;  // Command type (1 for request, 0 for release)
-  int resourceType; // Resource type being requested or released
-  int count;        // Number of instances being requested or released
+  long senderPid;   // Process ID
+  int commandType;  // Type of command (request or release)
+  int resourceType; // Type of resource
+  int count;        // Number of resources
 } MessageA5;
 
 int getCurrentChildren(void);

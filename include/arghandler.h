@@ -5,11 +5,12 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "globals.h"
 #include "shared.h"
 
-int isNumber(const char *str);
-int ossArgs(int argc, char *argv[]);
+int isPositiveNumber(const char *str, int *outValue);
+int psmgmtArgs(int argc, char *argv[]);
 // int workerArgs(int argc, char *argv[], WorkerConfig *config);
-void printOSSUsage(const char *programName);
+void printUsage(const char *programName);
 
 #endif

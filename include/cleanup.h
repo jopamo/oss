@@ -1,8 +1,12 @@
 #ifndef CLEANUP_H
 #define CLEANUP_H
 
-#include <signal.h>
-#include <sys/types.h>
+#include "globals.h"
+#include "process.h"
+#include "queue.h"
+#include "resource.h"
+#include "shared.h"
+#include "user_process.h"
 
 extern volatile sig_atomic_t cleanupInitiated;
 

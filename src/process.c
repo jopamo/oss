@@ -1,17 +1,6 @@
 #include "process.h"
-#include "cleanup.h"
-#include "globals.h"
-#include "shared.h"
-#include "user_process.h"
 
-pid_t parentPid;
-
-void waitForChildProcesses(void) {
-  int status;
-  while ((timekeeperPid > 0 && waitpid(timekeeperPid, &status, 0) > 0) ||
-         (tableprinterPid > 0 && waitpid(tableprinterPid, &status, 0) > 0)) {
-  }
-}
+void atexitHandler(void) { cleanupResources(); }
 
 void parentSignalHandler(int sig) {
   char buffer[256];
@@ -23,14 +12,12 @@ void parentSignalHandler(int sig) {
              sig);
     signalSafeLog(LOG_LEVEL_INFO, buffer);
     keepRunning = 0;
-    sendSignalToChildGroups(SIGTERM);
     break;
   case SIGALRM:
     snprintf(buffer, sizeof(buffer), "OSS (PID: %d): Timer expired.\n",
              getpid());
     signalSafeLog(LOG_LEVEL_INFO, buffer);
     keepRunning = 0;
-    sendSignalToChildGroups(SIGTERM);
     break;
   case SIGCHLD:
     while (waitpid(-1, NULL, WNOHANG) > 0) {
@@ -38,7 +25,6 @@ void parentSignalHandler(int sig) {
     snprintf(buffer, sizeof(buffer),
              "OSS (PID: %d): Child process terminated.\n", getpid());
     signalSafeLog(LOG_LEVEL_INFO, buffer);
-    sendSignalToChildGroups(SIGTERM);
     break;
   default:
     snprintf(buffer, sizeof(buffer),
@@ -75,22 +61,15 @@ void childExitHandler(int sig) {
   int status;
 
   while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-
-    for (int i = 0; i < MAX_PROCESSES; i++) {
-      if (processTable[i].occupied && processTable[i].pid == pid) {
-
-        log_message(LOG_LEVEL_INFO, 0, "Child process PID: %d terminated.",
-                    pid);
-
-        memset(&processTable[i], 0, sizeof(processTable[i]));
-
-        break;
-      }
+    // Find the index of the process that has terminated
+    int index = findProcessIndexByPID(pid);
+    if (index != -1) {
+      handleTermination(pid);
+      log_message(LOG_LEVEL_INFO, 0,
+                  "Child process PID: %d terminated and cleaned up.", pid);
     }
   }
 }
-
-void atexitHandler(void) { cleanupResources(); }
 
 void setupTimeout(int seconds) {
   struct sigaction sa;
@@ -115,7 +94,10 @@ void registerChildProcess(pid_t pid) {
   if (index != -1) {
     processTable[index].pid = pid;
     processTable[index].occupied = 1;
-    log_message(LOG_LEVEL_INFO, 0,
+    processTable[index].state = PROCESS_RUNNING;
+    processTable[index].startSeconds = simClock->seconds;
+    processTable[index].startNano = simClock->nanoseconds;
+    log_message(LOG_LEVEL_DEBUG, 0,
                 "Registered child process with PID %d at index %d", pid, index);
   } else {
     log_message(
@@ -126,9 +108,12 @@ void registerChildProcess(pid_t pid) {
   }
 }
 
-void terminateProcess(pid_t pid) { kill(pid, SIGTERM); }
-
 int findFreeProcessTableEntry(void) {
+  if (processTable == NULL) {
+    log_message(LOG_LEVEL_ERROR, 0, "Process table is not initialized.");
+    return -1; // Indicate failure
+  }
+
   for (int i = 0; i < maxProcesses; i++) {
     if (!processTable[i].occupied) {
       log_message(LOG_LEVEL_DEBUG, 0,
@@ -138,10 +123,6 @@ int findFreeProcessTableEntry(void) {
   }
   log_message(LOG_LEVEL_WARN, 0, "No free process table entries found.");
   return -1;
-}
-
-int stillChildrenToLaunch() {
-  return totalLaunched < MAX_PROCESSES && currentChildren < maxSimultaneous;
 }
 
 pid_t forkAndExecute(const char *executable) {
@@ -157,54 +138,28 @@ pid_t forkAndExecute(const char *executable) {
   return pid;
 }
 
-void sendSignalToChildGroups(int sig) {
-  if (timekeeperPid > 0) {
-    kill(-timekeeperPid, sig);
-  }
-  if (tableprinterPid > 0) {
-    kill(-tableprinterPid, sig);
-  }
-}
-
 void handleTermination(pid_t pid) {
   int index = findProcessIndexByPID(pid);
   if (index != -1) {
-    freeAllProcessResources(
-        index);               // Assume function frees resources in `resource.c`
-    clearProcessEntry(index); // Cleans up the process table entry
+    // Free all resources held by the process
+    freeAllProcessResources(index);
+    // Clear the process entry
+    clearProcessEntry(index);
+    // Log the event
     log_message(LOG_LEVEL_INFO, 0,
                 "Terminated process %d and cleared resources.", pid);
-    decrementCurrentChildren(); // Decrement the count of current children
+    // Decrement the count of active children
+    decrementCurrentChildren();
   }
 }
 
 void freeAllProcessResources(int index) {
-  releaseAllResourcesForProcess(
-      processTable[index].pid); // Releases all resources held by the process
+  releaseAllResourcesForProcess(processTable[index].pid);
 }
 
 void updateResourceAndProcessTables() {
-  logResourceTable(); // Logs current state of resources
-  logProcessTable();  // Logs current state of the process table
-}
-
-// Logs the current state of the resource table
-void logResourceTable() {
-  for (int i = 0; i < MAX_RESOURCES; i++) {
-    log_message(LOG_LEVEL_DEBUG, 0, "Resource %d: Available %d", i,
-                resourceTable[i].available);
-  }
-}
-
-// Logs the current state of the process table
-void logProcessTable() {
-  for (int i = 0; i < MAX_PROCESSES; i++) {
-    if (processTable[i].occupied) {
-      log_message(LOG_LEVEL_DEBUG, 0, "Process %d: PID %ld, State %s", i,
-                  processTable[i].pid,
-                  processStateToString(processTable[i].state));
-    }
-  }
+  logResourceTable();
+  logProcessTable();
 }
 
 void decrementCurrentChildren() {
@@ -216,7 +171,7 @@ void decrementCurrentChildren() {
 const char *processStateToString(int state) {
   switch (state) {
   case PROCESS_RUNNING:
-    return "Running";
+    return "Running ";
   case PROCESS_WAITING:
     return "Waiting";
   case PROCESS_TERMINATED:
@@ -226,26 +181,16 @@ const char *processStateToString(int state) {
   }
 }
 
-// Clears a process entry in the process table
 void clearProcessEntry(int index) {
-  processTable[index].occupied = 0;
-  processTable[index].pid = 0;
-  processTable[index].state = PROCESS_TERMINATED;
+  if (index >= 0 && index < maxProcesses && processTable[index].occupied) {
+    processTable[index].occupied = 1;
+    processTable[index].state = PROCESS_TERMINATED;
+    log_message(LOG_LEVEL_INFO, 0, "Process terminated at table entry index %d",
+                index);
+  }
 }
 
-/**
- * Attempts to terminate a process or process group with the given process ID.
- * @param pid The process ID or process group ID of the target. Negative PID for
- * process groups.
- * @param sig The signal to send.
- */
-int killProcess(int pid, int sig) {
-  if (kill(pid, sig) == -1) {
-    perror("Error killing process or process group");
-    return -1;
-  }
-  return SUCCESS;
-}
+int killProcess(int pid, int sig) { return kill(pid, sig); }
 
 int findProcessIndexByPID(pid_t pid) {
   for (int i = 0; i < maxProcesses; i++) {
@@ -259,4 +204,36 @@ int findProcessIndexByPID(pid_t pid) {
   log_message(LOG_LEVEL_WARN, 0, "No process table entry found for PID %ld",
               (long)pid);
   return -1;
+}
+
+void logProcessTable() {
+  log_message(LOG_LEVEL_INFO, 0,
+              "---------------- Process Table ----------------");
+  log_message(
+      LOG_LEVEL_INFO, 0,
+      " Index | PID    | State        | Start Time   | Blocked | Block Until");
+
+  for (int i = 0; i < maxProcesses; i++) {
+    if (processTable[i].occupied ||
+        processTable[i].state == PROCESS_TERMINATED) {
+      char startTime[64], blockTime[64];
+
+      // Formatting the start and block time to include leading zeros for
+      // nanoseconds and ensure uniform field widths
+      snprintf(startTime, sizeof(startTime), "%02d.%09d",
+               processTable[i].startSeconds, processTable[i].startNano);
+      snprintf(blockTime, sizeof(blockTime), "%02d.%09d",
+               processTable[i].eventBlockedUntilSec,
+               processTable[i].eventBlockedUntilNano);
+
+      // Ensure alignment in the log output by adjusting the spacing in the
+      // format specifier
+      log_message(LOG_LEVEL_INFO, 0, "%5d  | %6d | %-12s | %s | %7s | %s", i,
+                  processTable[i].pid,
+                  processStateToString(processTable[i].state), startTime,
+                  processTable[i].blocked ? "Yes" : "No", blockTime);
+    }
+  }
+  log_message(LOG_LEVEL_INFO, 0,
+              "------------------------------------------------");
 }

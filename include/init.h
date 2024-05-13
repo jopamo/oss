@@ -2,7 +2,10 @@
 #define INIT_H
 
 #include "globals.h"
+#include "queue.h"
+#include "resource.h"
 #include "shared.h"
+#include "user_process.h"
 
 void *safe_shmat(int shmId, const void *shmaddr, int shmflg);
 int initializeSimulatedClock(void);

@@ -1,14 +1,16 @@
 #include "globals.h"
 
+int maxResources = DEFAULT_MAX_RESOURCES;
 int maxProcesses = DEFAULT_MAX_PROCESSES;
 int maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
+int maxInstances = DEFAULT_MAX_INSTANCES;
 int launchInterval = DEFAULT_LAUNCH_INTERVAL;
 char logFileName[256] = DEFAULT_LOG_FILE_NAME;
 FILE *logFile = NULL;
 
 // Global variables to represent different process and system states
-ProcessType gProcessType;   // Current process type
-struct timeval startTime;   // System start time
+ProcessType gProcessType; // Current process type
+
 struct timeval lastLogTime; // Last log entry time
 
 SimulatedClock *simClock = NULL; // Pointer to simulated system clock
@@ -16,7 +18,7 @@ ActualTime *actualTime = NULL;   // Pointer to actual time for processes
 
 PCB *processTable; // Pointer to process control block table
 
-MLFQ mlfq; // Multi-level feedback queue structure
+pthread_mutex_t processTableMutex = PTHREAD_MUTEX_INITIALIZER;
 
 int msqId = -1; // Message queue identifier
 
@@ -37,16 +39,11 @@ int childTimeLimit = DEFAULT_CHILD_TIME_LIMIT; // Time limit for child processes
 
 int currentChildren = 0; // Current number of child processes
 
-int currentLogLevel = LOG_LEVEL_DEBUG; // Current log level
+int totalLaunched = 0;
+
+int currentLogLevel = LOG_LEVEL_INFO; // Current log level
 
 sem_t *clockSem = SEM_FAILED; // Semaphore for clock synchronization
 const char *clockSemName = "/simClockSem"; // Name of the clock semaphore
 
 pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for logging
-
-int totalLaunched = 0;
-
-pid_t timekeeperPid = 0;
-pid_t tableprinterPid = 0;
-
-int deadlockCheckInterval = 1000;

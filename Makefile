@@ -12,36 +12,44 @@ TEST_OBJ_DIR = $(OBJ_DIR)/test
 TEST_BIN_DIR = $(BIN_DIR)/test
 
 # Source Files
-COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c shared.c resource.c user_process.c globals.c queue.c)
-OSS_VERSIONS = $(wildcard $(SRC_DIR)/ossA*.c)
-OSS_DEPS = $(addprefix $(SRC_DIR)/, process.c init.c cleanup.c)  # Specific dependencies for OSS versions
+COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c shared.c init.c resource.c user_process.c globals.c queue.c)
+WORKER_SRC = $(SRC_DIR)/worker.c
+PGMGMT_VERSIONS = $(wildcard $(SRC_DIR)/psmgmtA*.c)
+PGMGMT_DEPS = $(addprefix $(SRC_DIR)/, process.c cleanup.c timeutils.c)
 TEST_SRC = $(wildcard $(TEST_DIR)/*.c)
-TEST_COMMON_SRC = $(COMMON_SRC) $(OSS_DEPS)
+TEST_COMMON_SRC = $(COMMON_SRC) $(PGMGMT_DEPS)
 
 # Object Files
 COMMON_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(COMMON_SRC))
-OSS_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(OSS_VERSIONS))
-OSS_DEPS_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(OSS_DEPS))
+WORKER_OBJ = $(OBJ_DIR)/worker.o
+PGMGMT_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(PGMGMT_VERSIONS))
+PGMGMT_DEPS_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(PGMGMT_DEPS))
 TEST_OBJ = $(patsubst $(TEST_DIR)/%.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRC))
 TEST_COMMON_OBJ = $(patsubst $(SRC_DIR)/%.c,$(TEST_OBJ_DIR)/%.o,$(TEST_COMMON_SRC))
 
 # Executables
-OSS_EXECUTABLES = $(patsubst $(SRC_DIR)/%.c,$(BIN_DIR)/%,$(OSS_VERSIONS))
+WORKER_EXECUTABLE = $(BIN_DIR)/worker
+PGMGMT_EXECUTABLES = $(patsubst $(SRC_DIR)/%.c,$(BIN_DIR)/%,$(PGMGMT_VERSIONS))
 TEST_EXECUTABLES = $(patsubst $(TEST_DIR)/%.c,$(TEST_BIN_DIR)/%,$(TEST_SRC))
 
 # Targets
-.PHONY: all clean directories test
+.PHONY: all clean directories test worker
 
-all: directories $(OSS_EXECUTABLES)
+all: directories $(PGMGMT_EXECUTABLES) worker
 
-directories:
-	mkdir -p $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(TEST_BIN_DIR)
+worker: $(WORKER_EXECUTABLE)
 
-$(BIN_DIR)/%: $(OBJ_DIR)/%.o $(COMMON_OBJ) $(OSS_DEPS_OBJ)
+$(WORKER_EXECUTABLE): $(WORKER_OBJ) $(COMMON_OBJ)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+directories:
+	mkdir -p $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(TEST_BIN_DIR)
+
+$(BIN_DIR)/%: $(OBJ_DIR)/%.o $(COMMON_OBJ) $(PGMGMT_DEPS_OBJ)
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^
 
 $(TEST_OBJ_DIR)/%.o: $(TEST_DIR)/%.c
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
