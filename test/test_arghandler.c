@@ -11,7 +11,6 @@
 void setUp(void) {
   maxResources = DEFAULT_MAX_RESOURCES;
   maxProcesses = DEFAULT_MAX_PROCESSES;
-  maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
   maxInstances = DEFAULT_MAX_INSTANCES;
   launchInterval = DEFAULT_LAUNCH_INTERVAL;
   strcpy(logFileName, DEFAULT_LOG_FILE_NAME);
@@ -57,7 +56,7 @@ void test_psmgmtArgs_ValidInputs(void) {
 
   TEST_ASSERT_EQUAL(0, psmgmtArgs(argc, argv));
   TEST_ASSERT_EQUAL(5, maxProcesses);
-  TEST_ASSERT_EQUAL(3, maxSimultaneous);
+  TEST_ASSERT_EQUAL(3, MAX_SIMULTANEOUS);
   TEST_ASSERT_EQUAL(100, launchInterval);
   TEST_ASSERT_EQUAL_STRING("log.txt", logFileName);
   TEST_ASSERT_EQUAL(10, maxResources);

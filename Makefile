@@ -12,23 +12,23 @@ TEST_OBJ_DIR = $(OBJ_DIR)/test
 TEST_BIN_DIR = $(BIN_DIR)/test
 
 # Source Files
-COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c shared.c init.c resource.c user_process.c globals.c queue.c)
-WORKER_SRC = $(SRC_DIR)/worker.c
+COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c cleanup.c shared.c process.c init.c resource.c user_process.c globals.c queue.c)
+WORKER_VERSIONS = $(wildcard $(SRC_DIR)/workerA*.c)
 PGMGMT_VERSIONS = $(wildcard $(SRC_DIR)/psmgmtA*.c)
-PGMGMT_DEPS = $(addprefix $(SRC_DIR)/, process.c cleanup.c timeutils.c)
+PGMGMT_DEPS = $(addprefix $(SRC_DIR)/, timeutils.c)
 TEST_SRC = $(wildcard $(TEST_DIR)/*.c)
 TEST_COMMON_SRC = $(COMMON_SRC) $(PGMGMT_DEPS)
 
 # Object Files
 COMMON_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(COMMON_SRC))
-WORKER_OBJ = $(OBJ_DIR)/worker.o
+WORKER_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(WORKER_VERSIONS))
 PGMGMT_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(PGMGMT_VERSIONS))
 PGMGMT_DEPS_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(PGMGMT_DEPS))
 TEST_OBJ = $(patsubst $(TEST_DIR)/%.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRC))
 TEST_COMMON_OBJ = $(patsubst $(SRC_DIR)/%.c,$(TEST_OBJ_DIR)/%.o,$(TEST_COMMON_SRC))
 
 # Executables
-WORKER_EXECUTABLE = $(BIN_DIR)/worker
+WORKER_EXECUTABLE = $(patsubst $(SRC_DIR)/%.c,$(BIN_DIR)/%,$(WORKER_VERSIONS))
 PGMGMT_EXECUTABLES = $(patsubst $(SRC_DIR)/%.c,$(BIN_DIR)/%,$(PGMGMT_VERSIONS))
 TEST_EXECUTABLES = $(patsubst $(TEST_DIR)/%.c,$(TEST_BIN_DIR)/%,$(TEST_SRC))
 

@@ -39,8 +39,8 @@ void *attachSharedMemory(const char *path, int proj_id, size_t size,
 int detachSharedMemory(void **shmPtr, const char *segmentName);
 void log_message(int level, int logToFile, const char *format, ...);
 key_t getSharedMemoryKey(const char *path, int proj_id);
-int sendMessage(int msqId, const void *msg, size_t msgSize);
+int sendMessage(int msqId, const void *msg, size_t msgSize, long msgType);
 int receiveMessage(int msqId, void *msg, size_t msgSize, long msgType,
-                   int flags);
+                   int flags, long expectedSenderPid);
 
 #endif

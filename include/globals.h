@@ -28,16 +28,15 @@
 #define ONE_SECOND 1000000000L // One second in nanoseconds
 
 // absolute maximums
-#define MAX_PROCESSES 100
+#define MAX_PROCESSES 50
 #define MAX_SIMULTANEOUS 18
-#define MAX_RESOURCES 100
-#define MAX_INSTANCES 50
+#define MAX_RESOURCES 20
+#define MAX_INSTANCES 40
 #define MAX_RESOURCE_TYPES 10
 
 // default values assigned to variables
 #define DEFAULT_MAX_RESOURCES 10
-#define DEFAULT_MAX_PROCESSES 50
-#define DEFAULT_MAX_SIMULTANEOUS 8
+#define DEFAULT_MAX_PROCESSES 18
 #define DEFAULT_MAX_INSTANCES 20
 
 #define DEFAULT_CHILD_TIME_LIMIT 10
@@ -45,7 +44,7 @@
 #define DEFAULT_LOG_FILE_NAME "psmgmt.log"
 
 #define MAX_RUNTIME 60
-#define TIMEKEEPER_SIM_SPEED_FACTOR 0.04
+#define TIMEKEEPER_SIM_SPEED_FACTOR 0.12
 
 #define MSG_PATH "/tmp"
 #define MSG_PROJ_ID 'a'
@@ -104,7 +103,6 @@ typedef enum { PROCESS_TYPE_PSMGMT, PROCESS_TYPE_WORKER } ProcessType;
 
 extern int maxResources;
 extern int maxProcesses;
-extern int maxSimultaneous;
 extern int maxInstances;
 extern int launchInterval;
 extern char logFileName[256];

@@ -12,7 +12,6 @@ int mock_pid = 1234;
 void setUp(void) {
   maxResources = DEFAULT_MAX_RESOURCES;
   maxProcesses = DEFAULT_MAX_PROCESSES;
-  maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
   maxInstances = DEFAULT_MAX_INSTANCES;
   launchInterval = DEFAULT_LAUNCH_INTERVAL;
   strcpy(logFileName, DEFAULT_LOG_FILE_NAME);
@@ -35,36 +34,65 @@ void tearDown(void) {
   cleanupResources();
 }
 
-void test_findFreeProcessTableEntry_Should_ReturnValidIndex_When_Called(void) {
+void test_findFreeProcessTableEntry_should_return_valid_index(void) {
+  processTable[0].occupied = 0;
+  processTable[1].occupied = 1;
+  processTable[2].occupied = 1;
+
   int index = findFreeProcessTableEntry();
-  TEST_ASSERT_NOT_EQUAL(-1, index);
+
+  TEST_ASSERT_EQUAL(0, index);
 }
 
-void test_registerChildProcess_Should_Register_When_CalledWithValidPID(void) {
+void test_findFreeProcessTableEntry_should_return_negative_when_full(void) {
+  processTable[0].occupied = 1;
+  processTable[1].occupied = 1;
+  processTable[2].occupied = 1;
+
   int index = findFreeProcessTableEntry();
-  TEST_ASSERT_NOT_EQUAL(-1, index);
 
-  registerChildProcess(mock_pid);
-
-  TEST_ASSERT_EQUAL(mock_pid, processTable[index].pid);
-  TEST_ASSERT_EQUAL(1, processTable[index].occupied);
+  TEST_ASSERT_EQUAL(-1, index);
 }
 
-void test_registerChildProcess_Should_HandleFailure_When_NoFreeEntry(void) {
-  for (int i = 0; i < maxProcesses; i++) {
-    processTable[i].occupied = 1;
-  }
+void test_registerChildProcess_should_register_when_table_not_full(void) {
+  pid_t test_pid = 12345;
+  processTable[0].occupied = 0;
 
-  int prev_pid = mock_pid;
-  registerChildProcess(mock_pid);
-  TEST_ASSERT_TRUE(prev_pid != mock_pid ||
-                   processTable[maxProcesses - 1].pid != mock_pid);
+  registerChildProcess(test_pid);
+
+  TEST_ASSERT_EQUAL(test_pid, processTable[0].pid);
+  TEST_ASSERT_EQUAL(1, processTable[0].occupied);
+  TEST_ASSERT_EQUAL(PROCESS_RUNNING, processTable[0].state);
+}
+
+void test_registerChildProcess_should_terminate_when_table_full(void) {
+  pid_t test_pid = 12345;
+  processTable[0].occupied = 1;
+  processTable[1].occupied = 1;
+  processTable[2].occupied = 1;
+
+  registerChildProcess(test_pid);
+}
+
+void test_handleTermination_should_clean_up_process(void) {
+  pid_t test_pid = 12345;
+  processTable[0].pid = test_pid;
+  processTable[0].occupied = 1;
+
+  handleTermination(test_pid);
+
+  TEST_ASSERT_EQUAL(0, processTable[0].occupied);
+  TEST_ASSERT_EQUAL(PROCESS_TERMINATED, processTable[0].state);
 }
 
 int main(void) {
   UNITY_BEGIN();
-  RUN_TEST(test_findFreeProcessTableEntry_Should_ReturnValidIndex_When_Called);
-  RUN_TEST(test_registerChildProcess_Should_Register_When_CalledWithValidPID);
-  RUN_TEST(test_registerChildProcess_Should_HandleFailure_When_NoFreeEntry);
+
+  RUN_TEST(test_findFreeProcessTableEntry_should_return_valid_index);
+  RUN_TEST(test_findFreeProcessTableEntry_should_return_negative_when_full);
+  RUN_TEST(test_registerChildProcess_should_register_when_table_not_full);
+  RUN_TEST(test_registerChildProcess_should_terminate_when_table_full);
+  RUN_TEST(test_handleTermination_should_clean_up_process);
+
   return UNITY_END();
 }

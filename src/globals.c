@@ -2,7 +2,6 @@
 
 int maxResources = DEFAULT_MAX_RESOURCES;
 int maxProcesses = DEFAULT_MAX_PROCESSES;
-int maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
 int maxInstances = DEFAULT_MAX_INSTANCES;
 int launchInterval = DEFAULT_LAUNCH_INTERVAL;
 char logFileName[256] = DEFAULT_LOG_FILE_NAME;

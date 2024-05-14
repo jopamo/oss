@@ -17,7 +17,7 @@ int psmgmtArgs(int argc, char *argv[]) {
   int opt;
   int tempValue;
 
-  while ((opt = getopt(argc, argv, "hn:s:i:f:r:u:")) != -1) {
+  while ((opt = getopt(argc, argv, "hn:i:f:r:u:")) != -1) {
     switch (opt) {
     case 'h':
       printUsage(argv[0]);
@@ -29,16 +29,6 @@ int psmgmtArgs(int argc, char *argv[]) {
         return ERROR_INVALID_ARGS;
       }
       maxProcesses = tempValue;
-      break;
-    case 's':
-      if (!isPositiveNumber(optarg, &tempValue) ||
-          tempValue > MAX_SIMULTANEOUS) {
-        fprintf(stderr,
-                "Invalid or too many simultaneous processes specified: %s\n",
-                optarg);
-        return ERROR_INVALID_ARGS;
-      }
-      maxSimultaneous = tempValue;
       break;
     case 'i':
       if (!isPositiveNumber(optarg, &tempValue)) {

@@ -11,17 +11,16 @@ void signalSafeLog(int level, const char *message) {
   int msgLength = strlen(message);
 
   if (msgLength > LOG_BUFFER_SIZE - 2) {
-    msgLength = LOG_BUFFER_SIZE -
-                2; // Ensure there's room for newline and null terminator
+    // Ensure there's room for newline and null terminator
+    msgLength = LOG_BUFFER_SIZE - 2;
   }
 
   memcpy(buffer, message, msgLength);
   buffer[msgLength] = '\n';
   buffer[msgLength + 1] = '\0';
 
-  ssize_t written =
-      write(STDERR_FILENO, buffer,
-            msgLength + 1); // msgLength + 1 to include the newline
+  // msgLength + 1 to include the newline
+  ssize_t written = write(STDERR_FILENO, buffer, msgLength + 1);
   if (written == -1) {
     // If write fails, try to handle error minimally
     static const char errorMsg[] = "Error writing log\n";
@@ -39,7 +38,7 @@ void signalHandler(int sig) {
              "Child process (PID: %d): Termination requested by signal %d.\n",
              getpid(), sig);
     signalSafeLog(LOG_LEVEL_INFO, buffer);
-    _exit(EXIT_SUCCESS); // For testing, exit immediately on SIGINT or SIGTERM
+    _exit(EXIT_SUCCESS);
   } else if (sig == SIGCHLD) {
     int status;
     while (waitpid(-1, &status, WNOHANG) > 0) {
@@ -49,8 +48,8 @@ void signalHandler(int sig) {
 
 void setupSignalHandlers(void) {
   struct sigaction sa;
-  sigemptyset(&sa.sa_mask); // Do not block other signals during handling
-  sa.sa_flags = 0;          // No special flags
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
   sa.sa_handler = signalHandler;
 
   if (sigaction(SIGINT, &sa, NULL) == -1 ||
@@ -109,7 +108,7 @@ int better_sem_post(sem_t *sem) {
 int better_sleep(time_t sec, long nsec) {
   struct timespec req = {sec, nsec}, rem;
   while (nanosleep(&req, &rem) == -1 && errno == EINTR) {
-    log_message(LOG_LEVEL_WARN, 0,
+    log_message(LOG_LEVEL_DEBUG, 0,
                 "Sleep interrupted. Sleeping again for remaining time...");
     req = rem; // Continue sleeping for the remaining time
   }
@@ -117,7 +116,7 @@ int better_sleep(time_t sec, long nsec) {
     log_message(LOG_LEVEL_ANNOY, 0, "Sleep completed successfully.");
     return 0;
   } else {
-    log_message(LOG_LEVEL_ERROR, 0, "Failed to complete sleep: %s",
+    log_message(LOG_LEVEL_DEBUG, 0, "Failed to complete sleep: %s",
                 strerror(errno));
     return -1;
   }

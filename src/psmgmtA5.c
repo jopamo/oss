@@ -15,10 +15,25 @@ void initializeSimulationEnvironment(void);
 void manageSimulation(void);
 void manageChildTerminations(void);
 void manageResourceRequests(int msqId);
-bool shouldLaunchNextChild();
+bool shouldLaunchNextChild(void);
 
-int stillChildrenToLaunch() {
-  return totalLaunched < maxProcesses && currentChildren < maxSimultaneous;
+void displaySharedMemoryTimes(void) {
+  if (better_sem_wait(clockSem) == 0) {
+    log_message(LOG_LEVEL_DEBUG, 0,
+                "Simulated Time: %ld seconds, %ld nanoseconds",
+                simClock->seconds, simClock->nanoseconds);
+    log_message(LOG_LEVEL_DEBUG, 0, "Actual Time: %ld seconds, %ld nanoseconds",
+                actualTime->seconds, actualTime->nanoseconds);
+    better_sem_post(clockSem);
+  } else {
+    log_message(
+        LOG_LEVEL_DEBUG, 0,
+        "Failed to acquire semaphore for accessing shared memory times.");
+  }
+}
+
+int stillChildrenToLaunch(void) {
+  return totalLaunched < maxProcesses && currentChildren < MAX_SIMULTANEOUS;
 }
 
 int main(int argc, char *argv[]) {
@@ -52,7 +67,6 @@ void initializeSimulationEnvironment(void) {
     exit(EXIT_FAILURE);
   }
 
-  // Assuming simClock is already initialized in shared memory setup
   logFile = fopen(logFileName, "w+");
   if (!logFile) {
     perror("Failed to open log file");
@@ -70,7 +84,7 @@ void manageSimulation(void) {
     manageChildTerminations();
 
     if (shouldLaunchNextChild()) {
-      pid_t pid = forkAndExecute("./worker");
+      pid_t pid = forkAndExecute("./workerA5");
       if (pid > 0) {
         registerChildProcess(pid);
         totalLaunched++;
@@ -95,13 +109,15 @@ void manageSimulation(void) {
       logProcessTable();
     }
 
+    manageResourceRequests(msqId);
+
     // Manage resource requests and deadlock checking once per second
     if (currentTimeSec > lastResourceCheckTimeSec) {
-      manageResourceRequests(msqId);
-
       if (unsafeSystem()) { // Check for deadlocks only once per second
         resolveDeadlocks();
       }
+
+      displaySharedMemoryTimes();
 
       lastResourceCheckTimeSec = currentTimeSec;
     }
@@ -115,6 +131,9 @@ void manageSimulation(void) {
       better_sleep(0, sleepNano);
     }
   }
+
+  // Log final statistics before exiting
+  logStatistics();
 }
 
 void manageResourceRequests(int msqId) {
@@ -123,31 +142,31 @@ void manageResourceRequests(int msqId) {
 
   // Non-blocking check for messages
   while (true) {
-    result = receiveMessage(msqId, &msg, sizeof(msg), 0, IPC_NOWAIT);
+    result = receiveMessage(msqId, &msg, sizeof(msg), 0, IPC_NOWAIT, 0);
 
-    if (result == 0) { // Adjusted to check for success as return '0'
+    if (result ==
+        0) { // Check for success (receiveMessage returns '0' for success)
       log_message(
-          LOG_LEVEL_INFO, 0,
+          LOG_LEVEL_DEBUG, 0,
           "Received message from PID %d: Command %d, ResourceType %d, Count %d",
           msg.senderPid, msg.commandType, msg.resourceType, msg.count);
 
       // Handle resource request or release based on the command type
       if (msg.commandType == MSG_REQUEST_RESOURCE) {
-        if (requestResource(msg.senderPid) == 0) {
+        if (requestResource(msg.senderPid, msg.resourceType, msg.count) == 0) {
           log_message(LOG_LEVEL_INFO, 0, "Resource allocated to PID %d",
                       msg.senderPid);
         } else {
           log_message(LOG_LEVEL_WARN, 0,
                       "Failed to allocate resource to PID %d", msg.senderPid);
-          // Optionally enqueue the request if it cannot be granted immediately
-          enqueue(&resourceQueues[msg.resourceType], msg);
+          enqueue(&resourceQueues[msg.resourceType], msg); // Add to wait queue
         }
       } else if (msg.commandType == MSG_RELEASE_RESOURCE) {
-        if (releaseResource(msg.senderPid) == 0) {
+        if (releaseResource(msg.senderPid, msg.resourceType, msg.count) == 0) {
           log_message(LOG_LEVEL_INFO, 0, "Resource released by PID %d",
                       msg.senderPid);
         } else {
-          log_message(LOG_LEVEL_ERROR, 0,
+          log_message(LOG_LEVEL_DEBUG, 0,
                       "Failed to release resource by PID %d", msg.senderPid);
         }
       }
@@ -155,9 +174,9 @@ void manageResourceRequests(int msqId) {
       // Handle unexpected errors
       log_message(LOG_LEVEL_ERROR, 0, "Failed to receive messages: %s",
                   strerror(errno));
-      break; // Exit the loop if a serious error occurs
+      break;
     } else {
-      // No more messages to process or other non-critical errors
+
       break;
     }
   }
@@ -169,12 +188,13 @@ void manageChildTerminations(void) {
   while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
     releaseAllResourcesForProcess(pid);
     currentChildren--;
+    successfullyTerminated++;
   }
 }
 
-bool shouldLaunchNextChild() {
+bool shouldLaunchNextChild(void) {
   static unsigned long lastLaunchSecond = 0;
-  if (currentChildren < maxSimultaneous &&
+  if (currentChildren < MAX_SIMULTANEOUS &&
       simClock->seconds > lastLaunchSecond + 1) {
     lastLaunchSecond = simClock->seconds;
     return true;

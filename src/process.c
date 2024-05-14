@@ -86,6 +86,15 @@ void timeoutHandler(int signum) {
   log_message(LOG_LEVEL_INFO, 0, "Timeout signal received, signum: %d.",
               signum);
   keepRunning = 0;
+
+  for (int i = 0; i < maxProcesses; i++) {
+    if (processTable[i].occupied && processTable[i].state == PROCESS_RUNNING) {
+      kill(processTable[i].pid, SIGTERM); // Send SIGTERM to each running child
+      log_message(LOG_LEVEL_INFO, 0, "Sent SIGTERM to PID: %d.",
+                  processTable[i].pid);
+    }
+  }
+
   cleanupAndExit();
 }
 
@@ -141,14 +150,10 @@ pid_t forkAndExecute(const char *executable) {
 void handleTermination(pid_t pid) {
   int index = findProcessIndexByPID(pid);
   if (index != -1) {
-    // Free all resources held by the process
     freeAllProcessResources(index);
-    // Clear the process entry
     clearProcessEntry(index);
-    // Log the event
     log_message(LOG_LEVEL_INFO, 0,
                 "Terminated process %d and cleared resources.", pid);
-    // Decrement the count of active children
     decrementCurrentChildren();
   }
 }
@@ -182,7 +187,7 @@ const char *processStateToString(int state) {
 }
 
 void clearProcessEntry(int index) {
-  if (index >= 0 && index < maxProcesses && processTable[index].occupied) {
+  if (index >= 0 && index < MAX_SIMULTANEOUS && processTable[index].occupied) {
     processTable[index].occupied = 1;
     processTable[index].state = PROCESS_TERMINATED;
     log_message(LOG_LEVEL_INFO, 0, "Process terminated at table entry index %d",
@@ -193,7 +198,7 @@ void clearProcessEntry(int index) {
 int killProcess(int pid, int sig) { return kill(pid, sig); }
 
 int findProcessIndexByPID(pid_t pid) {
-  for (int i = 0; i < maxProcesses; i++) {
+  for (int i = 0; i < MAX_SIMULTANEOUS; i++) {
     if (processTable[i].occupied && processTable[i].pid == pid) {
       log_message(LOG_LEVEL_DEBUG, 0,
                   "Found process table entry for PID %ld at index %d",
@@ -201,7 +206,7 @@ int findProcessIndexByPID(pid_t pid) {
       return i;
     }
   }
-  log_message(LOG_LEVEL_WARN, 0, "No process table entry found for PID %ld",
+  log_message(LOG_LEVEL_DEBUG, 0, "No process table entry found for PID %ld",
               (long)pid);
   return -1;
 }
@@ -219,7 +224,7 @@ void logProcessTable() {
       char startTime[64], blockTime[64];
 
       // Formatting the start and block time to include leading zeros for
-      // nanoseconds and ensure uniform field widths
+      // cleared resources and ensure uniform field widths
       snprintf(startTime, sizeof(startTime), "%02d.%09d",
                processTable[i].startSeconds, processTable[i].startNano);
       snprintf(blockTime, sizeof(blockTime), "%02d.%09d",

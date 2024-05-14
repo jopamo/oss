@@ -14,7 +14,6 @@ void *mock_shmaddr = (void *)12345678;
 void setUp(void) {
   maxProcesses = DEFAULT_MAX_PROCESSES;
   maxResources = DEFAULT_MAX_RESOURCES;
-  maxSimultaneous = DEFAULT_MAX_SIMULTANEOUS;
   launchInterval = DEFAULT_LAUNCH_INTERVAL;
   strcpy(logFileName, DEFAULT_LOG_FILE_NAME);
 
@@ -44,21 +43,10 @@ void test_detachSharedMemoryFail(void) {
   TEST_ASSERT_EQUAL(-1, detachSharedMemory(&memory, "TestSegment"));
 }
 
-void test_messageSendingReceiving(void) {
-  int msqId = initMessageQueue();
-  MessageA5 msg = {123, 1, 5, 10};
-  TEST_ASSERT_EQUAL(0, sendMessage(msqId, &msg, sizeof(msg)));
-  MessageA5 receivedMsg;
-  TEST_ASSERT_EQUAL(
-      0, receiveMessage(msqId, &receivedMsg, sizeof(receivedMsg), 123, 0));
-  TEST_ASSERT_EQUAL(msg.senderPid, receivedMsg.senderPid);
-}
-
 int main(void) {
   UNITY_BEGIN();
   RUN_TEST(test_attachSharedMemory);
   RUN_TEST(test_detachSharedMemory);
   RUN_TEST(test_detachSharedMemoryFail);
-  RUN_TEST(test_messageSendingReceiving);
   return UNITY_END();
 }

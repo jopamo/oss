@@ -34,6 +34,6 @@ void decrementCurrentChildren(void);
 const char *processStateToString(int state);
 void clearProcessEntry(int index);
 int killProcess(int pid, int sig);
-int findProcessIndexByPID(pid_t pid);
+int findProcessIndexByPID(int pid);
 
 #endif

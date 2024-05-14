@@ -110,13 +110,8 @@ key_t getSharedMemoryKey(const char *path, int proj_id) {
   return key;
 }
 
-// Send a generic message using a void pointer
-int sendMessage(int msqId, const void *msg, size_t msgSize) {
+int sendMessage(int msqId, const void *msg, size_t msgSize, long msgType) {
   better_sem_wait(clockSem); // Synchronize access to shared resources
-
-  long mtype = *(
-      (long *)
-          msg); // Assuming the first member of the message is the type (mtype)
 
   int result = msgsnd(msqId, msg, msgSize - sizeof(long),
                       0); // Subtract sizeof(long) to exclude the mtype
@@ -124,20 +119,20 @@ int sendMessage(int msqId, const void *msg, size_t msgSize) {
     log_message(LOG_LEVEL_ERROR, 0,
                 "[SEND] Error: Failed to send message. msqId: %d, Type: %ld, "
                 "Error: %s (%d)",
-                msqId, mtype, strerror(errno), errno);
+                msqId, msgType, strerror(errno), errno);
     sem_post(clockSem);
     return -1;
   }
 
   log_message(LOG_LEVEL_DEBUG, 0,
               "[SEND] Success: Message sent. msqId: %d, Type: %ld", msqId,
-              mtype);
+              msgType);
   sem_post(clockSem);
   return 0;
 }
 
 int receiveMessage(int msqId, void *msg, size_t msgSize, long msgType,
-                   int flags) {
+                   int flags, long expectedSenderPid) {
   if (better_sem_wait(clockSem) == 0) {
     ssize_t result = msgrcv(msqId, msg, msgSize - sizeof(long), msgType, flags);
     if (result == -1) {
@@ -155,10 +150,20 @@ int receiveMessage(int msqId, void *msg, size_t msgSize, long msgType,
       better_sem_post(clockSem);
       return -1;
     }
+    MessageA5 *receivedMsg = (MessageA5 *)msg;
+    if (receivedMsg->senderPid == expectedSenderPid) {
+      log_message(
+          LOG_LEVEL_DEBUG, 0,
+          "[RECEIVE] Info: Ignoring message from same PID. Continuing.");
+      better_sem_post(clockSem);
+      return -1;
+    }
     log_message(LOG_LEVEL_DEBUG, 0,
                 "[RECEIVE] Success: Message received. msqId: %d, Type: %ld, "
-                "Size: %ld bytes",
-                msqId, msgType, result);
+                "PID: %ld, CommandType: %d, ResourceType: %d, Count: %d",
+                msqId, msgType, receivedMsg->senderPid,
+                receivedMsg->commandType, receivedMsg->resourceType,
+                receivedMsg->count);
     better_sem_post(clockSem);
     return 0;
   }

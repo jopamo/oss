@@ -7,11 +7,12 @@
 #include "shared.h"
 #include "user_process.h"
 
-void *safe_shmat(int shmId, const void *shmaddr, int shmflg);
-int initializeSimulatedClock(void);
-int initializeActualTime(void);
+int initializeResourceQueues(void);
+int initMessageQueue(void);
+int initializeSemaphore(void);
+int initializeClockAndTime(void);
+int initializeResourceTable(void);
 int initializeProcessTable(void);
 void initializeSharedResources(void);
-int initMessageQueue(void);
 
 #endif
