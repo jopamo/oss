@@ -6,6 +6,7 @@
 The Process Manager (psmgmt) is designed to simulate an operating system's process scheduling and inter-process communication using shared memory. This simulation includes a "simulated system clock" and a process table consisting of Process Control Blocks (PCBs) for each process. **The latest update introduces advanced resource management and deadlock detection mechanisms to psmgmt, enhancing its ability to simulate real-world operating system behaviors.**
 
 ## Quick Start Guide 🚀
+LOG_LEVEL is controlled in src/globals.c, but this will soon be commandline option.
 
 ### Compile the Program
 
@@ -20,21 +21,16 @@ make
 The `psmgmt` program supports several command-line options to customize the simulation:
 
 - `-n <total_processes>`: Set the total number of processes to spawn.
-- `-s <simultaneous_processes>`: Set the maximum number of processes to run simultaneously.
 - `-t <time_limit_for_children>`: Set the time limit (in seconds) for each child process's lifespan.
 - `-i <interval_in_ms_to_launch_children>`: Set the interval (in milliseconds) between launching child processes.
 - `-f <logfile>`: Specify the log file for `psmgmt` output.
-
-**New Feature Overview:**
-
-- **Resource Management**: Simulates the allocation, use, and release of system resources by processes, incorporating a deadlock detection mechanism to identify and resolve potential deadlocks among processes.
 
 **Example Command:**
 
 To launch a simulation with the updated features:
 
 ```bash
-./psmgmt -n 10 -s 5 -t 7 -i 100 -f psmgmt_log.txt
+./psmgmt -n 10 -t 7 -i 100 -f psmgmt_log.txt
 ```
 
 ### Cleaning Up
@@ -45,11 +41,6 @@ To clean up and remove all compiled files, run:
 make clean
 ```
 
-## Development and Contribution
-
-- **New**: The introduction of resource management and deadlock detection requires thorough testing and optimization. Contributions to these areas are highly welcome.
-- Use the provided Makefile for building the project, which ensures that both `psmgmt` and `worker` are compiled correctly.
-
 ## Changelog
 
-**For a complete list of changes, please refer to the [Commit History](https://github.com/jopamo/psmgmt/commits/main) on GitHub, including the latest updates on resource management and deadlock detection mechanisms.**
+**For a complete list of changes, please refer to the [Commit History](https://github.com/jopamo/psmgmt/commits/main) on GitHub**
