@@ -1,8 +1,8 @@
 #include "init.h"
 
 int initializeResourceQueues(void) {
-  for (int i = 0; i < maxResources; i++) {
-    if (initQueue(&resourceQueues[i], maxResources) == -1) {
+  for (int i = 0; i < MAX_RESOURCES; i++) {
+    if (initQueue(&resourceQueues[i], MAX_RESOURCES) == -1) {
       log_message(LOG_LEVEL_ERROR, 0,
                   "Failed to initialize resource queue for resource %d", i);
       return -1;
@@ -64,7 +64,7 @@ int initializeResourceTable(void) {
 
   resourceTable = (ResourceDescriptor *)attachSharedMemory(
       SHM_PATH, SHM_PROJ_ID_RESOURCE_TABLE,
-      sizeof(ResourceDescriptor) * maxResources, "Resource Table");
+      sizeof(ResourceDescriptor) * MAX_RESOURCES, "Resource Table");
 
   if (resourceTable == NULL) {
     log_message(LOG_LEVEL_ERROR, 0,
@@ -75,7 +75,7 @@ int initializeResourceTable(void) {
   log_message(LOG_LEVEL_DEBUG, 0,
               "Attached to resource table shared memory successfully.");
 
-  for (int i = 0; i < maxResources; i++) {
+  for (int i = 0; i < MAX_RESOURCES; i++) {
     resourceTable[i].total = maxInstances;
     resourceTable[i].available = maxInstances;
     memset(resourceTable[i].allocated, 0, sizeof(resourceTable[i].allocated));

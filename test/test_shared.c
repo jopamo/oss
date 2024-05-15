@@ -7,16 +7,7 @@
 #include "unity.c"
 #include "unity.h"
 
-key_t expectedKey = 1234;
-int mock_shmget_id = 4567;
-void *mock_shmaddr = (void *)12345678;
-
 void setUp(void) {
-  maxProcesses = DEFAULT_MAX_PROCESSES;
-  maxResources = DEFAULT_MAX_RESOURCES;
-  launchInterval = DEFAULT_LAUNCH_INTERVAL;
-  strcpy(logFileName, DEFAULT_LOG_FILE_NAME);
-
   semUnlinkCreate();
   initializeSharedResources();
 }

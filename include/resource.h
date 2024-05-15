@@ -1,8 +1,7 @@
 #ifndef RESOURCE_H
 #define RESOURCE_H
 
-#include <pthread.h>
-
+#include "globals.h"
 #include "process.h"
 #include "shared.h"
 

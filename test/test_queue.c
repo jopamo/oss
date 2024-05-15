@@ -8,12 +8,6 @@
 #include "unity.h"
 
 void setUp(void) {
-  maxResources = DEFAULT_MAX_RESOURCES;
-  maxProcesses = DEFAULT_MAX_PROCESSES;
-  maxInstances = DEFAULT_MAX_INSTANCES;
-  launchInterval = DEFAULT_LAUNCH_INTERVAL;
-  strcpy(logFileName, DEFAULT_LOG_FILE_NAME);
-
   semUnlinkCreate();
   initializeSharedResources();
 }

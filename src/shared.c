@@ -110,64 +110,64 @@ key_t getSharedMemoryKey(const char *path, int proj_id) {
   return key;
 }
 
-int sendMessage(int msqId, const void *msg, size_t msgSize, long msgType) {
+int sendMessage(int msqId, const void *msg, size_t msgSize) {
   better_sem_wait(clockSem); // Synchronize access to shared resources
 
   int result = msgsnd(msqId, msg, msgSize - sizeof(long),
                       0); // Subtract sizeof(long) to exclude the mtype
   if (result == -1) {
-    log_message(LOG_LEVEL_ERROR, 0,
-                "[SEND] Error: Failed to send message. msqId: %d, Type: %ld, "
-                "Error: %s (%d)",
-                msqId, msgType, strerror(errno), errno);
-    sem_post(clockSem);
+    log_message(
+        LOG_LEVEL_ERROR, 0,
+        "[SEND] Error: Failed to send message. msqId: %d, Error: %s (%d)",
+        msqId, strerror(errno), errno);
+    better_sem_post(clockSem);
     return -1;
   }
 
-  log_message(LOG_LEVEL_DEBUG, 0,
-              "[SEND] Success: Message sent. msqId: %d, Type: %ld", msqId,
-              msgType);
-  sem_post(clockSem);
+  log_message(LOG_LEVEL_DEBUG, 0, "[SEND] Success: Message sent. msqId: %d",
+              msqId);
+  better_sem_post(clockSem);
   return 0;
 }
 
-int receiveMessage(int msqId, void *msg, size_t msgSize, long msgType,
-                   int flags, long expectedSenderPid) {
-  if (better_sem_wait(clockSem) == 0) {
-    ssize_t result = msgrcv(msqId, msg, msgSize - sizeof(long), msgType, flags);
-    if (result == -1) {
-      if (errno == ENOMSG) { // No message of the desired type was found
-        log_message(LOG_LEVEL_DEBUG, 0,
-                    "[RECEIVE] Info: No message of desired type available. "
-                    "Continuing.");
+int receiveMessage(int msqId, void *msg, size_t msgSize, int flags) {
+  pid_t myPid = getpid();
+  while (true) {
+    if (better_sem_wait(clockSem) == 0) {
+      ssize_t result = msgrcv(msqId, msg, msgSize - sizeof(long), 0, flags);
+      if (result == -1) {
+        if (errno == ENOMSG) { // No message of the desired type was found
+          log_message(LOG_LEVEL_DEBUG, 0,
+                      "[RECEIVE] Info: No message of desired type available. "
+                      "Continuing.");
+          better_sem_post(clockSem);
+          return -1;
+        }
+        log_message(LOG_LEVEL_ERROR, 0,
+                    "[RECEIVE] Error: Failed to receive message. msqId: %d, "
+                    "Error: %s (%d)",
+                    msqId, strerror(errno), errno);
         better_sem_post(clockSem);
         return -1;
       }
-      log_message(LOG_LEVEL_ERROR, 0,
-                  "[RECEIVE] Error: Failed to receive message. msqId: %d, "
-                  "Expected Type: %ld, Error: %s (%d)",
-                  msqId, msgType, strerror(errno), errno);
+      MessageA5 *receivedMsg = (MessageA5 *)msg;
+      if (receivedMsg->senderPid == myPid) {
+        log_message(
+            LOG_LEVEL_DEBUG, 0,
+            "[RECEIVE] Info: Ignoring message from same PID. Continuing.");
+        better_sem_post(clockSem);
+        continue;
+      }
+      log_message(LOG_LEVEL_DEBUG, 0,
+                  "[RECEIVE] Success: Message received. msqId: %d, PID: %ld, "
+                  "CommandType: %d, ResourceType: %d, Count: %d",
+                  msqId, (long)receivedMsg->senderPid, receivedMsg->commandType,
+                  receivedMsg->resourceType, receivedMsg->count);
       better_sem_post(clockSem);
-      return -1;
+      return 0;
     }
-    MessageA5 *receivedMsg = (MessageA5 *)msg;
-    if (receivedMsg->senderPid == expectedSenderPid) {
-      log_message(
-          LOG_LEVEL_DEBUG, 0,
-          "[RECEIVE] Info: Ignoring message from same PID. Continuing.");
-      better_sem_post(clockSem);
-      return -1;
-    }
-    log_message(LOG_LEVEL_DEBUG, 0,
-                "[RECEIVE] Success: Message received. msqId: %d, Type: %ld, "
-                "PID: %ld, CommandType: %d, ResourceType: %d, Count: %d",
-                msqId, msgType, receivedMsg->senderPid,
-                receivedMsg->commandType, receivedMsg->resourceType,
-                receivedMsg->count);
-    better_sem_post(clockSem);
-    return 0;
+    usleep(10000); // Sleep for 10ms to avoid busy-waiting
   }
-  return -1;
 }
 
 void cleanupSharedResources(void) {

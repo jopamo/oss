@@ -1,6 +1,8 @@
 #ifndef CLEANUP_H
 #define CLEANUP_H
 
+#include <signal.h>
+
 #include "globals.h"
 #include "process.h"
 #include "queue.h"

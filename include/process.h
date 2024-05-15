@@ -16,12 +16,6 @@
 #define PROCESS_WAITING 2
 #define PROCESS_TERMINATED 3
 
-void parentSignalHandler(int sig);
-void setupParentSignalHandlers(void);
-void childExitHandler(int sig);
-void atexitHandler(void);
-void setupTimeout(int seconds);
-void timeoutHandler(int signum);
 void registerChildProcess(pid_t pid);
 int findFreeProcessTableEntry(void);
 int stillChildrenToLaunch(void);

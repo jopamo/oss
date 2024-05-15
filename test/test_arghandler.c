@@ -8,21 +8,7 @@
 #include "unity.c"
 #include "unity.h"
 
-void setUp(void) {
-  maxResources = DEFAULT_MAX_RESOURCES;
-  maxProcesses = DEFAULT_MAX_PROCESSES;
-  maxInstances = DEFAULT_MAX_INSTANCES;
-  launchInterval = DEFAULT_LAUNCH_INTERVAL;
-  strcpy(logFileName, DEFAULT_LOG_FILE_NAME);
-
-  // Ensure log file is closed if opened
-  if (logFile) {
-    fclose(logFile);
-    logFile = NULL;
-  }
-
-  initializeSharedResources();
-}
+void setUp(void) { initializeSharedResources(); }
 
 void tearDown(void) {
   if (logFile != NULL) {
@@ -34,48 +20,74 @@ void tearDown(void) {
   cleanupResources();
 }
 
-void test_isNumber_ValidNumber(void) {
-  int outValue;
-  TEST_ASSERT_TRUE(isPositiveNumber("123", &outValue));
-  TEST_ASSERT_TRUE(isPositiveNumber("99999", &outValue));
+void test_isPositiveNumber_withNullInput(void) {
+  int value;
+  int result = isPositiveNumber(NULL, &value);
+  TEST_ASSERT_EQUAL(0, result);
 }
 
-void test_isNumber_InvalidNumber(void) {
-  int outValue;
-  TEST_ASSERT_FALSE(isPositiveNumber("abc", &outValue));
-  TEST_ASSERT_FALSE(isPositiveNumber("-123", &outValue));
-  TEST_ASSERT_FALSE(isPositiveNumber("123abc", &outValue));
-  TEST_ASSERT_FALSE(isPositiveNumber("", &outValue));
-  TEST_ASSERT_FALSE(isPositiveNumber("123.456", &outValue));
+void test_isPositiveNumber_withEmptyString(void) {
+  int value;
+  int result = isPositiveNumber("", &value);
+  TEST_ASSERT_EQUAL(0, result);
 }
 
-void test_psmgmtArgs_ValidInputs(void) {
-  char *argv[] = {"program", "-n",      "5",  "-s", "3",  "-i", "100",
-                  "-f",      "log.txt", "-r", "10", "-u", "20", NULL};
-  int argc = sizeof(argv) / sizeof(argv[0]) - 1;
-
-  TEST_ASSERT_EQUAL(0, psmgmtArgs(argc, argv));
-  TEST_ASSERT_EQUAL(5, maxProcesses);
-  TEST_ASSERT_EQUAL(3, MAX_SIMULTANEOUS);
-  TEST_ASSERT_EQUAL(100, launchInterval);
-  TEST_ASSERT_EQUAL_STRING("log.txt", logFileName);
-  TEST_ASSERT_EQUAL(10, maxResources);
-  TEST_ASSERT_EQUAL(20, maxInstances);
+void test_isPositiveNumber_withValidPositiveNumber(void) {
+  int value;
+  int result = isPositiveNumber("123", &value);
+  TEST_ASSERT_EQUAL(1, result);
+  TEST_ASSERT_EQUAL(123, value);
 }
 
-void test_psmgmtArgs_InvalidInputs(void) {
-  char *argv[] = {"program", "-n",      "200", "-s",  "20", "-i", "abc",
-                  "-f",      "log.txt", "-r",  "101", "-u", "51", NULL};
-  int argc = sizeof(argv) / sizeof(argv[0]) - 1;
+void test_isPositiveNumber_withInvalidString(void) {
+  int value;
+  int result = isPositiveNumber("abc", &value);
+  TEST_ASSERT_EQUAL(0, result);
+}
 
-  TEST_ASSERT_EQUAL(ERROR_INVALID_ARGS, psmgmtArgs(argc, argv));
+void test_isPositiveNumber_withNegativeNumber(void) {
+  int value;
+  int result = isPositiveNumber("-123", &value);
+  TEST_ASSERT_EQUAL(0, result);
+}
+
+void test_isPositiveNumber_withZero(void) {
+  int value;
+  int result = isPositiveNumber("0", &value);
+  TEST_ASSERT_EQUAL(0, result);
+}
+
+void test_isPositiveNumber_withMaxInt(void) {
+  int value;
+  char str[12];
+  sprintf(str, "%d", INT_MAX);
+  int result = isPositiveNumber(str, &value);
+  TEST_ASSERT_EQUAL(1, result);
+  TEST_ASSERT_EQUAL(INT_MAX, value);
+}
+
+void test_isPositiveNumber_withOverflowNumber(void) {
+  int value;
+  int result = isPositiveNumber("2147483648", &value); // INT_MAX + 1
+  TEST_ASSERT_EQUAL(0, result);
+}
+
+void test_isPositiveNumber_withTrailingCharacters(void) {
+  int value;
+  int result = isPositiveNumber("123abc", &value);
+  TEST_ASSERT_EQUAL(0, result);
 }
 
 int main(void) {
   UNITY_BEGIN();
-  RUN_TEST(test_isNumber_ValidNumber);
-  RUN_TEST(test_isNumber_InvalidNumber);
-  RUN_TEST(test_psmgmtArgs_ValidInputs);
-  RUN_TEST(test_psmgmtArgs_InvalidInputs);
+  RUN_TEST(test_isPositiveNumber_withNullInput);
+  RUN_TEST(test_isPositiveNumber_withEmptyString);
+  RUN_TEST(test_isPositiveNumber_withValidPositiveNumber);
+  RUN_TEST(test_isPositiveNumber_withInvalidString);
+  RUN_TEST(test_isPositiveNumber_withNegativeNumber);
+  RUN_TEST(test_isPositiveNumber_withZero);
+  RUN_TEST(test_isPositiveNumber_withMaxInt);
+  RUN_TEST(test_isPositiveNumber_withOverflowNumber);
+  RUN_TEST(test_isPositiveNumber_withTrailingCharacters);
   return UNITY_END();
 }

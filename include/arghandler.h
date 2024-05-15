@@ -1,10 +1,6 @@
 #ifndef ARGHANDLER_H
 #define ARGHANDLER_H
 
-#include <limits.h>
-#include <string.h>
-#include <unistd.h>
-
 #include "globals.h"
 #include "shared.h"
 

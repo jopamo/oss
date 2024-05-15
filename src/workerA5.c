@@ -6,7 +6,7 @@
 
 #define B 250000000L // Upper bound in nanoseconds for random timing
 #define TERMINATION_CHECK_INTERVAL 250000000L // Check termination every 250ms
-#define REQUEST_PROBABILITY 99 // 90% probability of requesting vs releasing
+#define REQUEST_PROBABILITY 90 // 90% probability of requesting vs releasing
 
 // Local array to track the resources held by the worker
 int heldResources[MAX_RESOURCES] = {0};
@@ -19,7 +19,7 @@ void sendResourceRequest(int action, int resourceType) {
       .count = 1 // Always request or release one unit
   };
 
-  if (sendMessage(msqId, &msg, sizeof(msg), msg.resourceType) == 0) {
+  if (sendMessage(msqId, &msg, sizeof(msg)) == 0) {
     log_message(LOG_LEVEL_DEBUG, 0,
                 "Worker %d: Sent message to %s resource R%d", getpid(),
                 action == REQUEST_RESOURCE ? "request" : "release",
@@ -34,11 +34,9 @@ void sendResourceRequest(int action, int resourceType) {
 
 void waitForResourceResponse(int action, int resourceType) {
   MessageA5 response;
-  pid_t myPid = getpid();
 
   while (true) {
-    if (receiveMessage(msqId, &response, sizeof(response), resourceType, 0,
-                       myPid) == 0) {
+    if (receiveMessage(msqId, &response, sizeof(response), IPC_NOWAIT) == 0) {
       log_message(LOG_LEVEL_DEBUG, 0,
                   "Worker %d: Received response for resource %s", getpid(),
                   action == REQUEST_RESOURCE ? "request" : "release");
@@ -61,7 +59,7 @@ void sendTerminationMessage(void) {
                    .resourceType = -1,
                    .count = 0};
 
-  if (sendMessage(msqId, &msg, sizeof(msg), msg.resourceType) == 0) {
+  if (sendMessage(msqId, &msg, sizeof(msg)) == 0) {
     log_message(LOG_LEVEL_DEBUG, 0, "Worker %d: Sent termination message",
                 getpid());
   } else {

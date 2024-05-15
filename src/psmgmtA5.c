@@ -6,6 +6,7 @@
 #include "queue.h"
 #include "resource.h"
 #include "shared.h"
+#include "signals.h"
 #include "timeutils.h"
 #include "user_process.h"
 
@@ -14,7 +15,7 @@
 void initializeSimulationEnvironment(void);
 void manageSimulation(void);
 void manageChildTerminations(void);
-void manageResourceRequests(int msqId);
+void manageResourceRequests(void);
 bool shouldLaunchNextChild(void);
 
 void displaySharedMemoryTimes(void) {
@@ -109,7 +110,7 @@ void manageSimulation(void) {
       logProcessTable();
     }
 
-    manageResourceRequests(msqId);
+    manageResourceRequests();
 
     // Manage resource requests and deadlock checking once per second
     if (currentTimeSec > lastResourceCheckTimeSec) {
@@ -136,13 +137,13 @@ void manageSimulation(void) {
   logStatistics();
 }
 
-void manageResourceRequests(int msqId) {
+void manageResourceRequests(void) {
   MessageA5 msg;
   int result;
 
   // Non-blocking check for messages
   while (true) {
-    result = receiveMessage(msqId, &msg, sizeof(msg), 0, IPC_NOWAIT, 0);
+    result = receiveMessage(msqId, &msg, sizeof(msg), IPC_NOWAIT);
 
     if (result ==
         0) { // Check for success (receiveMessage returns '0' for success)
@@ -176,7 +177,6 @@ void manageResourceRequests(int msqId) {
                   strerror(errno));
       break;
     } else {
-
       break;
     }
   }

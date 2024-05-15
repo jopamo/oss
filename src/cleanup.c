@@ -1,6 +1,9 @@
 #include "cleanup.h"
 
+#include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 volatile sig_atomic_t cleanupInitiated = 0;
 

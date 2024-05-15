@@ -13,7 +13,7 @@ int terminatedByDeadlock = 0;
 int successfullyTerminated = 0;
 int deadlockDetectionRuns = 0;
 
-bool isProcessRunning(int pid) {
+bool isProcessRunning(pid_t pid) {
   pthread_mutex_lock(&processTableMutex);
   int index = findProcessIndexByPID(pid);
   if (index == -1) {
@@ -28,7 +28,7 @@ bool isProcessRunning(int pid) {
   return running;
 }
 
-void log_resource_state(const char *operation, int pid, int resourceType,
+void log_resource_state(const char *operation, pid_t pid, int resourceType,
                         int count, int availableBefore, int availableAfter) {
   unsigned long currentSec, currentNano;
   better_sem_wait(clockSem);
@@ -46,7 +46,11 @@ void log_resource_state(const char *operation, int pid, int resourceType,
               availableAfter);
 }
 
-int requestResource(int pid, int resourceType, int count) {
+int requestResource(pid_t pid, int resourceType, int count) {
+  log_message(LOG_LEVEL_DEBUG, 0,
+              "Attempting to request %d units of resource %d for PID %d", count,
+              resourceType, pid);
+
   pthread_mutex_lock(&resourceTableMutex);
 
   // Find the correct index in the process table for the given PID
@@ -93,7 +97,21 @@ int requestResource(int pid, int resourceType, int count) {
 }
 
 int releaseResource(int pid, int resourceType, int count) {
-  pthread_mutex_lock(&resourceTableMutex);
+  log_message(LOG_LEVEL_DEBUG, 0,
+              "Attempting to release %d units of resource %d for PID %d", count,
+              resourceType, pid);
+
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  ts.tv_sec += 2; // Wait for 2 seconds
+
+  if (pthread_mutex_timedlock(&resourceTableMutex, &ts) != 0) {
+    log_message(LOG_LEVEL_ERROR, 0,
+                "Failed to acquire resourceTableMutex for releaseResource");
+    return -1;
+  }
+  log_message(LOG_LEVEL_DEBUG, 0,
+              "Acquired resourceTableMutex for releaseResource");
 
   int index = findProcessIndexByPID(pid);
   if (index == -1 || !isProcessRunning(pid)) {
@@ -123,6 +141,9 @@ int releaseResource(int pid, int resourceType, int count) {
               availableBefore, availableAfter);
 
   pthread_mutex_unlock(&resourceTableMutex);
+  log_message(LOG_LEVEL_DEBUG, 0,
+              "Released resourceTableMutex for releaseResource");
+
   return 0;
 }
 
@@ -138,9 +159,21 @@ void releaseAllResourcesForProcess(int pid) {
     return;
   }
 
-  for (int resourceType = 0; resourceType < maxResources; resourceType++) {
-    while (resourceTable[resourceType].allocated[index] > 0) {
-      releaseResource(pid, resourceType, 1);
+  for (int resourceType = 0; resourceType < MAX_RESOURCES; resourceType++) {
+    log_message(LOG_LEVEL_INFO, 0,
+                "Trying to release resources for resourceType %d...",
+                resourceType);
+    int allocation = resourceTable[resourceType].allocated[index];
+    if (allocation > 0) {
+      log_message(LOG_LEVEL_INFO, 0,
+                  "PID %d has %d units of resource %d allocated.", pid,
+                  allocation, resourceType);
+      resourceTable[resourceType].available += allocation;
+      resourceTable[resourceType].allocated[index] = 0;
+      log_message(LOG_LEVEL_INFO, 0,
+                  "Released %d units of resource %d for PID: %d. Available: %d",
+                  allocation, resourceType, pid,
+                  resourceTable[resourceType].available);
     }
   }
 
@@ -156,8 +189,8 @@ bool unsafeSystem(void) {
   }
   int finish[MAX_PROCESSES] = {0};
 
-  for (int i = 0; i < maxProcesses; i++) {
-    for (int j = 0; j < maxResources; j++) {
+  for (int i = 0; i < MAX_SIMULTANEOUS; i++) {
+    for (int j = 0; j < MAX_RESOURCES; j++) {
       if (resourceTable[j].allocated[i] > 0) {
         finish[i] = 0;
         log_message(LOG_LEVEL_DEBUG, 0,
@@ -168,10 +201,11 @@ bool unsafeSystem(void) {
   }
 
   bool systemIsSafe = true;
-  for (int i = 0; i < maxProcesses; i++) {
+  for (int i = 0; i < MAX_SIMULTANEOUS; i++) {
     if (!finish[i]) {
       log_message(LOG_LEVEL_DEBUG, 0,
                   "System is unsafe: Process P%d cannot finish.", i);
+      systemIsSafe = false;
       break;
     }
   }
@@ -180,7 +214,7 @@ bool unsafeSystem(void) {
     log_message(LOG_LEVEL_INFO, 0, "System is safe: All processes can finish.");
   }
 
-  return true;
+  return !systemIsSafe;
 }
 
 void resolveDeadlocks(void) {
@@ -194,7 +228,7 @@ void resolveDeadlocks(void) {
 
   // Create arrays for the Banker's Algorithm
   int work[MAX_RESOURCES];
-  bool finish[MAX_PROCESSES];
+  bool finish[MAX_SIMULTANEOUS];
   int need[MAX_PROCESSES][MAX_RESOURCES];
 
   // Initialize work vector as a copy of available resources
@@ -203,12 +237,12 @@ void resolveDeadlocks(void) {
   }
 
   // Initialize finish vector to false
-  for (int i = 0; i < MAX_PROCESSES; i++) {
+  for (int i = 0; i < MAX_SIMULTANEOUS; i++) {
     finish[i] = false;
   }
 
   // Calculate the need matrix
-  for (int i = 0; i < MAX_PROCESSES; i++) {
+  for (int i = 0; i < MAX_SIMULTANEOUS; i++) {
     for (int j = 0; j < MAX_RESOURCES; j++) {
       need[i][j] = resourceTable[j].total - resourceTable[j].allocated[i];
     }
@@ -218,11 +252,11 @@ void resolveDeadlocks(void) {
   bool progress = true;
   while (progress) {
     progress = false;
-    for (int i = 0; i < MAX_PROCESSES; i++) {
+    for (int i = 0; i < MAX_SIMULTANEOUS; i++) {
       if (!finish[i]) {
         bool canFinish = true;
         for (int j = 0; j < MAX_RESOURCES; j++) {
-          if (need[i][j] > work[j]) {
+          if (resourceTable[j].allocated[i] > 0 && need[i][j] > work[j]) {
             canFinish = false;
             break;
           }
@@ -239,18 +273,20 @@ void resolveDeadlocks(void) {
   }
 
   // Identify deadlocked processes
-  for (int i = 0; i < MAX_PROCESSES; i++) {
-    if (!finish[i]) {
-      log_message(LOG_LEVEL_INFO, 1,
-                  "Process P%d is deadlocked. Terminating process.", i);
-      releaseAllResourcesForProcess(i);
+  for (int i = 0; i < MAX_SIMULTANEOUS; i++) {
+    if (!finish[i] && processTable[i].occupied) {
+      log_message(LOG_LEVEL_INFO, 0,
+                  "Process P%d is deadlocked. Terminating process.",
+                  processTable[i].pid);
+      releaseAllResourcesForProcess(processTable[i].pid);
       terminatedByDeadlock++;
+      processTable[i].state = PROCESS_TERMINATED;
       deadlockResolved = true;
     }
   }
 
   if (deadlockResolved) {
-    log_message(LOG_LEVEL_INFO, 1,
+    log_message(LOG_LEVEL_INFO, 0,
                 "Deadlock resolved: All resources held by deadlocked processes "
                 "have been released.");
   } else {
@@ -261,22 +297,44 @@ void resolveDeadlocks(void) {
 }
 
 void logResourceTable() {
-  log_message(LOG_LEVEL_INFO, 0, "Current system resources");
-  log_message(LOG_LEVEL_INFO, 0, "R0 R1 R2 R3 R4 R5 R6 R7 R8 R9");
+  log_message(LOG_LEVEL_INFO, 0,
+              "---------------- Resource Table ----------------");
 
-  for (int i = 0; i < maxProcesses; i++) {
-    if (isProcessRunning(processTable[i].pid)) {
-      char buffer[1024] = {0};
-      snprintf(buffer, sizeof(buffer), "P%d", processTable[i].pid);
-      for (int j = 0; j < maxResources; j++) {
-        snprintf(buffer + strlen(buffer), sizeof(buffer) - strlen(buffer),
-                 " %d", resourceTable[j].allocated[i]);
+  // Log header
+  char header[1024] = "    ";
+  for (int j = 0; j < MAX_RESOURCES; j++) {
+    char resourceHeader[16];
+    snprintf(resourceHeader, sizeof(resourceHeader), "R%-4d", j);
+    strcat(header, resourceHeader);
+  }
+  log_message(LOG_LEVEL_INFO, 0, header);
+
+  // Log resource availability
+  char availability[1024] = "Avl ";
+  for (int j = 0; j < MAX_RESOURCES; j++) {
+    char resourceAvailability[16];
+    snprintf(resourceAvailability, sizeof(resourceAvailability), "%-4d",
+             resourceTable[j].available);
+    strcat(availability, resourceAvailability);
+  }
+  log_message(LOG_LEVEL_INFO, 0, availability);
+
+  // Log each process's resource allocation
+  for (int i = 0; i < MAX_SIMULTANEOUS; i++) {
+    if (processTable[i].occupied) {
+      char buffer[1024];
+      snprintf(buffer, sizeof(buffer), "P%-3d ", processTable[i].pid);
+      for (int j = 0; j < MAX_RESOURCES; j++) {
+        char resourceAllocation[16];
+        snprintf(resourceAllocation, sizeof(resourceAllocation), "%-4d",
+                 resourceTable[j].allocated[i]);
+        strcat(buffer, resourceAllocation);
       }
-      log_message(LOG_LEVEL_INFO, 0, "%s", buffer);
+      log_message(LOG_LEVEL_INFO, 0, buffer);
     }
   }
   log_message(LOG_LEVEL_INFO, 0,
-              "--------------------------------------------------");
+              "------------------------------------------------");
 }
 
 void logStatistics(void) {

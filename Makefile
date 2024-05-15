@@ -12,7 +12,7 @@ TEST_OBJ_DIR = $(OBJ_DIR)/test
 TEST_BIN_DIR = $(BIN_DIR)/test
 
 # Source Files
-COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c cleanup.c shared.c process.c init.c resource.c user_process.c globals.c queue.c)
+COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c cleanup.c shared.c signals.c process.c init.c resource.c user_process.c globals.c queue.c)
 WORKER_VERSIONS = $(wildcard $(SRC_DIR)/workerA*.c)
 PGMGMT_VERSIONS = $(wildcard $(SRC_DIR)/psmgmtA*.c)
 PGMGMT_DEPS = $(addprefix $(SRC_DIR)/, timeutils.c)
@@ -59,7 +59,7 @@ $(TEST_BIN_DIR)/%: $(TEST_OBJ_DIR)/%.o $(TEST_COMMON_OBJ)
 
 test: directories $(TEST_EXECUTABLES)
 	@echo "Running tests..."
-	@$(foreach test,$(TEST_EXECUTABLES),./$(test);)
+	@./run_tests.sh $(TEST_EXECUTABLES)
 
 clean:
 	rm -rf $(OBJ_DIR)/* $(BIN_DIR)/* $(TEST_OBJ_DIR)/* $(TEST_BIN_DIR)/*
