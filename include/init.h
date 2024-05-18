@@ -7,7 +7,7 @@
 #include "shared.h"
 #include "user_process.h"
 
-int initializeResourceQueues(void);
+int initializeMLFQ(void);
 int initMessageQueue(void);
 int initializeSemaphore(void);
 int initializeClockAndTime(void);

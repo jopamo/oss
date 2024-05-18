@@ -13,7 +13,7 @@
 extern volatile sig_atomic_t cleanupInitiated;
 
 int messageQueue_cleanup(void);
-void cleanupAndExit(void);
+int cleanupAndExit(int didSucceed);
 void cleanupResources(void);
 void cleanupSharedMemorySegment(int shmId, const char *segmentName);
 void logFile_cleanup(void);

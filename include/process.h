@@ -19,7 +19,7 @@
 void registerChildProcess(pid_t pid);
 int findFreeProcessTableEntry(void);
 int stillChildrenToLaunch(void);
-pid_t forkAndExecute(const char *executable);
+pid_t forkAndExecute(const char *executable, int argCount, char *args[]);
 void handleTermination(pid_t pid);
 void freeAllProcessResources(int index);
 void updateResourceAndProcessTables(void);

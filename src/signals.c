@@ -95,5 +95,5 @@ void timeoutHandler(int signum) {
     }
   }
 
-  cleanupAndExit();
+  cleanupAndExit(1);
 }

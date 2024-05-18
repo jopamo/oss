@@ -5,6 +5,11 @@ static double simSpeedFactor = TIMEKEEPER_SIM_SPEED_FACTOR;
 static struct timespec startTime;
 
 void initializeTimeTracking(void) {
+  if (clockSem == SEM_FAILED || clockSem == NULL) {
+    log_message(LOG_LEVEL_ERROR, 0, "Invalid semaphore pointer provided.");
+    return;
+  }
+
   if (better_sem_wait(clockSem) == 0) {
     if (!simClock->initialized) {
       simClock->seconds = 0;
@@ -22,6 +27,8 @@ void initializeTimeTracking(void) {
       log_message(LOG_LEVEL_DEBUG, 0, "Simulation clock initialized.");
     }
     better_sem_post(clockSem);
+  } else {
+    log_message(LOG_LEVEL_ERROR, 0, "Failed to wait on semaphore.");
   }
 }
 

@@ -1,14 +1,11 @@
 #include "init.h"
 
-int initializeResourceQueues(void) {
-  for (int i = 0; i < MAX_RESOURCES; i++) {
-    if (initQueue(&resourceQueues[i], MAX_RESOURCES) == -1) {
-      log_message(LOG_LEVEL_ERROR, 0,
-                  "Failed to initialize resource queue for resource %d", i);
-      return -1;
-    }
+int initializeMLFQ(void) {
+  if (initMLFQ(&mlfq, MAX_PROCESSES) == -1) {
+    log_message(LOG_LEVEL_ERROR, 0, "Failed to initialize MLFQ");
+    return -1;
   }
-  log_message(LOG_LEVEL_DEBUG, 0, "Resource queues initialized successfully.");
+  log_message(LOG_LEVEL_DEBUG, 0, "MLFQ initialized 0fully.");
   return 0;
 }
 
@@ -18,7 +15,7 @@ int initMessageQueue(void) {
   if (msg_key == -1) {             // Check for errors
     log_message(LOG_LEVEL_ERROR, 0, "ftok for msg_key failed: %s",
                 strerror(errno));
-    return ERROR_INIT_QUEUE;
+    return -1;
   }
 
   msqId =
@@ -26,10 +23,10 @@ int initMessageQueue(void) {
              IPC_CREAT | MSQ_PERMISSIONS); // Create or access the message queue
   if (msqId < 0) {                         // Check for errors
     log_message(LOG_LEVEL_ERROR, 0, "msgget failed: %s", strerror(errno));
-    return ERROR_INIT_QUEUE;
+    return -1;
   }
 
-  log_message(LOG_LEVEL_DEBUG, 0, "Message queue initialized successfully");
+  log_message(LOG_LEVEL_DEBUG, 0, "Message queue initialized 0fully");
   return msqId;
 }
 
@@ -41,7 +38,7 @@ int initializeSemaphore(void) {
                 strerror(errno));
     return -1;
   }
-  return SUCCESS;
+  return 0;
 }
 
 int initializeClockAndTime(void) {
@@ -56,7 +53,7 @@ int initializeClockAndTime(void) {
   if (actualTime == NULL)
     return -1;
 
-  return SUCCESS;
+  return 0;
 }
 
 int initializeResourceTable(void) {
@@ -73,7 +70,7 @@ int initializeResourceTable(void) {
   }
 
   log_message(LOG_LEVEL_DEBUG, 0,
-              "Attached to resource table shared memory successfully.");
+              "Attached to resource table shared memory 0fully.");
 
   for (int i = 0; i < MAX_RESOURCES; i++) {
     resourceTable[i].total = maxInstances;
@@ -84,8 +81,8 @@ int initializeResourceTable(void) {
                 resourceTable[i].total, resourceTable[i].available);
   }
 
-  log_message(LOG_LEVEL_DEBUG, 0, "Resource table initialized successfully.");
-  return SUCCESS;
+  log_message(LOG_LEVEL_DEBUG, 0, "Resource table initialized 0fully.");
+  return 0;
 }
 
 int initializeProcessTable(void) {
@@ -93,17 +90,17 @@ int initializeProcessTable(void) {
       (PCB *)attachSharedMemory(SHM_PATH, SHM_PROJ_ID_PROCESS_TABLE,
                                 maxProcesses * sizeof(PCB), "Process Table");
   if (processTable == NULL)
-    return ERROR_INIT_SHM;
+    return -1;
 
-  return SUCCESS;
+  return 0;
 }
 
 void initializeSharedResources(void) {
-  if (initializeClockAndTime() == -1 ||
-      initMessageQueue() == ERROR_INIT_QUEUE || initializeSemaphore() == -1) {
+  if (initializeClockAndTime() == -1 || initMessageQueue() == -1 ||
+      initializeSemaphore() == -1 || initializeMLFQ() == -1) {
     log_message(LOG_LEVEL_ERROR, 0,
                 "Failed to initialize all shared resources");
-    exit(EXIT_FAILURE);
+    cleanupAndExit(EXIT_FAILURE);
   }
 
   log_message(LOG_LEVEL_DEBUG, 0,

@@ -27,6 +27,8 @@ int semUnlinkCreate(void) {
 }
 
 void cleanupResources(void) {
+  pthread_mutex_lock(&cleanupMutex); // Ensure thread-safety
+
   if (cleanupInitiated)
     return; // Prevent double cleanup
   cleanupInitiated = 1;
@@ -59,6 +61,7 @@ void cleanupResources(void) {
   cleanupSharedMemorySegment(resourceTableShmId, "Resource Table");
 
   log_message(LOG_LEVEL_DEBUG, 0, "Cleanup completed.");
+  pthread_mutex_unlock(&cleanupMutex);
 }
 
 void cleanupSharedMemorySegment(int shmId, const char *segmentName) {
@@ -69,8 +72,14 @@ void cleanupSharedMemorySegment(int shmId, const char *segmentName) {
   }
 }
 
-void cleanupAndExit(void) {
+int cleanupAndExit(int didSucceed) {
+  // Perform cleanup tasks
   cleanupSharedResources();
   cleanupResources();
-  exit(EXIT_SUCCESS);
+
+  if (didSucceed) {
+    exit(EXIT_SUCCESS);
+  } else {
+    exit(EXIT_FAILURE);
+  }
 }

@@ -40,9 +40,11 @@ int currentChildren = 0; // Current number of child processes
 
 int totalLaunched = 0;
 
-int currentLogLevel = LOG_LEVEL_DEBUG; // Current log level
+int currentLogLevel = LOG_LEVEL_INFO; // Current log level
 
 sem_t *clockSem = SEM_FAILED; // Semaphore for clock synchronization
 const char *clockSemName = "/simClockSem"; // Name of the clock semaphore
 
 pthread_mutex_t logMutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for logging
+
+pthread_mutex_t cleanupMutex = PTHREAD_MUTEX_INITIALIZER; // Mutex for cleanup

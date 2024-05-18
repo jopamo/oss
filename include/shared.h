@@ -26,8 +26,18 @@ typedef struct {
   long senderPid;   // Process ID
   int commandType;  // Type of command (request or release)
   int resourceType; // Type of resource
+  int senderID;     // Main is 0, worker is 1
   int count;        // Number of resources
-} MessageA5;
+} Message;
+
+typedef struct {
+  int lifespanSeconds;
+  int lifespanNanoSeconds;
+} WorkerConfig;
+
+Message createWorkerMessage(pid_t senderPid, int commandType, int resourceType);
+Message createPsmgmtMessage(pid_t senderPid, int commandType, int resourceType,
+                            int count);
 
 int getCurrentChildren(void);
 void setCurrentChildren(int value);
@@ -40,6 +50,7 @@ int detachSharedMemory(void **shmPtr, const char *segmentName);
 void log_message(int level, int logToFile, const char *format, ...);
 key_t getSharedMemoryKey(const char *path, int proj_id);
 int sendMessage(int msqId, const void *msg, size_t msgSize);
-int receiveMessage(int msqId, void *msg, size_t msgSize, int flags);
+int receiveMessage(int msqId, void *msg, size_t msgSize, long msgType,
+                   int flags);
 
 #endif

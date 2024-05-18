@@ -13,33 +13,34 @@ TEST_BIN_DIR = $(BIN_DIR)/test
 
 # Source Files
 COMMON_SRC = $(addprefix $(SRC_DIR)/, arghandler.c cleanup.c shared.c signals.c process.c init.c resource.c user_process.c globals.c queue.c)
-WORKER_VERSIONS = $(wildcard $(SRC_DIR)/workerA*.c)
-PGMGMT_VERSIONS = $(wildcard $(SRC_DIR)/psmgmtA*.c)
 PGMGMT_DEPS = $(addprefix $(SRC_DIR)/, timeutils.c)
+PGMGMT_VERSIONS = $(SRC_DIR)/psmgmtA3.c
+WORKER_VERSIONS = $(SRC_DIR)/workerA3.c
 TEST_SRC = $(wildcard $(TEST_DIR)/*.c)
 TEST_COMMON_SRC = $(COMMON_SRC) $(PGMGMT_DEPS)
 
 # Object Files
 COMMON_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(COMMON_SRC))
-WORKER_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(WORKER_VERSIONS))
-PGMGMT_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(PGMGMT_VERSIONS))
 PGMGMT_DEPS_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(PGMGMT_DEPS))
+PGMGMT_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(PGMGMT_VERSIONS))
+WORKER_OBJ = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(WORKER_VERSIONS))
 TEST_OBJ = $(patsubst $(TEST_DIR)/%.c,$(TEST_OBJ_DIR)/%.o,$(TEST_SRC))
 TEST_COMMON_OBJ = $(patsubst $(SRC_DIR)/%.c,$(TEST_OBJ_DIR)/%.o,$(TEST_COMMON_SRC))
 
 # Executables
-WORKER_EXECUTABLE = $(patsubst $(SRC_DIR)/%.c,$(BIN_DIR)/%,$(WORKER_VERSIONS))
-PGMGMT_EXECUTABLES = $(patsubst $(SRC_DIR)/%.c,$(BIN_DIR)/%,$(PGMGMT_VERSIONS))
+PGMGMT_EXECUTABLE = $(BIN_DIR)/psmgmt
+WORKER_EXECUTABLE = $(BIN_DIR)/worker
 TEST_EXECUTABLES = $(patsubst $(TEST_DIR)/%.c,$(TEST_BIN_DIR)/%,$(TEST_SRC))
 
 # Targets
-.PHONY: all clean directories test worker
+.PHONY: all clean directories test
 
-all: directories $(PGMGMT_EXECUTABLES) worker
+all: directories $(PGMGMT_EXECUTABLE) $(WORKER_EXECUTABLE)
 
-worker: $(WORKER_EXECUTABLE)
+$(PGMGMT_EXECUTABLE): $(OBJ_DIR)/psmgmt.o $(PGMGMT_OBJ) $(COMMON_OBJ) $(PGMGMT_DEPS_OBJ)
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^
 
-$(WORKER_EXECUTABLE): $(WORKER_OBJ) $(COMMON_OBJ)
+$(WORKER_EXECUTABLE): $(OBJ_DIR)/worker.o $(WORKER_OBJ) $(COMMON_OBJ)
 	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
@@ -47,9 +48,6 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 
 directories:
 	mkdir -p $(OBJ_DIR) $(BIN_DIR) $(TEST_OBJ_DIR) $(TEST_BIN_DIR)
-
-$(BIN_DIR)/%: $(OBJ_DIR)/%.o $(COMMON_OBJ) $(PGMGMT_DEPS_OBJ)
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $^
 
 $(TEST_OBJ_DIR)/%.o: $(TEST_DIR)/%.c
 	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@

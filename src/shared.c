@@ -1,5 +1,27 @@
 #include "shared.h"
 
+Message createWorkerMessage(pid_t senderPid, int commandType,
+                            int resourceType) {
+  Message msg;
+  msg.senderPid = senderPid;
+  msg.commandType = commandType;
+  msg.resourceType = resourceType;
+  msg.senderID = 1; // Worker senderID
+  msg.count = 1;
+  return msg;
+}
+
+Message createPsmgmtMessage(pid_t senderPid, int commandType, int resourceType,
+                            int count) {
+  Message msg;
+  msg.senderPid = senderPid;
+  msg.commandType = commandType;
+  msg.resourceType = resourceType;
+  msg.senderID = 0; // psmgmt senderID
+  msg.count = count;
+  return msg;
+}
+
 int getCurrentChildren(void) { return currentChildren; }
 
 void setCurrentChildren(int value) { currentChildren = value; }
@@ -19,7 +41,7 @@ void *attachSharedMemory(const char *path, int proj_id, size_t size,
     return NULL;
   }
 
-  void *shmPtr = shmat(shmId, NULL, 0);
+  void *shmPtr = safe_shmat(shmId, NULL, 0); // Use safe_shmat instead of shmat
   if (shmPtr == (void *)-1) {
     log_message(LOG_LEVEL_ERROR, 0,
                 "Failed to attach to %s shared memory due to: %s", segmentName,
@@ -130,11 +152,13 @@ int sendMessage(int msqId, const void *msg, size_t msgSize) {
   return 0;
 }
 
-int receiveMessage(int msqId, void *msg, size_t msgSize, int flags) {
-  pid_t myPid = getpid();
+int receiveMessage(int msqId, void *msg, size_t msgSize, long msgType,
+                   int flags) {
   while (true) {
     if (better_sem_wait(clockSem) == 0) {
-      ssize_t result = msgrcv(msqId, msg, msgSize - sizeof(long), 0, flags);
+      ssize_t result =
+          msgrcv(msqId, msg, msgSize - sizeof(long), msgType, flags);
+
       if (result == -1) {
         if (errno == ENOMSG) { // No message of the desired type was found
           log_message(LOG_LEVEL_DEBUG, 0,
@@ -150,23 +174,12 @@ int receiveMessage(int msqId, void *msg, size_t msgSize, int flags) {
         better_sem_post(clockSem);
         return -1;
       }
-      MessageA5 *receivedMsg = (MessageA5 *)msg;
-      if (receivedMsg->senderPid == myPid) {
-        log_message(
-            LOG_LEVEL_DEBUG, 0,
-            "[RECEIVE] Info: Ignoring message from same PID. Continuing.");
-        better_sem_post(clockSem);
-        continue;
-      }
       log_message(LOG_LEVEL_DEBUG, 0,
-                  "[RECEIVE] Success: Message received. msqId: %d, PID: %ld, "
-                  "CommandType: %d, ResourceType: %d, Count: %d",
-                  msqId, (long)receivedMsg->senderPid, receivedMsg->commandType,
-                  receivedMsg->resourceType, receivedMsg->count);
+                  "[RECEIVE] Success: Message received. msqId: %d", msqId);
       better_sem_post(clockSem);
       return 0;
     }
-    usleep(10000); // Sleep for 10ms to avoid busy-waiting
+    better_sleep(0, 10000000); // Sleep for 10ms to avoid busy-waiting
   }
 }
 

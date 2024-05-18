@@ -67,13 +67,8 @@
 #define LOG_LEVEL_WARN 3
 #define LOG_LEVEL_ERROR 4
 
-// Error codes
-#define SUCCESS 0
-#define ERROR_INVALID_ARGS -64
-#define ERROR_INIT_QUEUE -65
-#define ERROR_INIT_SHM -66
-#define ERROR_INIT_MSQ -67
-#define ERROR_FILE_OPEN -68
+#define DEFAULT_LIFESPAN_SECONDS 5
+#define DEFAULT_LIFESPAN_NANOSECONDS 500000000
 
 // Time conversions
 #define NANOSECONDS_IN_SECOND 1000000000
@@ -137,5 +132,7 @@ extern pthread_mutex_t logMutex;
 extern int currentLogLevel;
 
 extern int totalLaunched;
+
+extern pthread_mutex_t cleanupMutex;
 
 #endif
